@@ -1,4 +1,4 @@
-"""Custom DaMiao GUI: live position + click-to-move dial (Babel slcan / USB-CAN-A)."""
+"""Dual-motor GUI: DaMiao DM-J6248P + LANDA PA043."""
 
 from __future__ import annotations
 
@@ -14,15 +14,23 @@ from flask import Flask, jsonify, render_template, request
 
 import patch_damiao
 from can_adapter import detect_kind, list_adapter_ports, looks_like_serial_channel
+from lande_backend import LandeBackend, MODE_KEYS_REVERSE
+
 
 MOTOR_TYPE = "6248P"
+MOTOR_MODEL_DAMIAO = "damiao_6248p"
+MOTOR_MODEL_LANDE = "lande_pa043"
+MOTOR_MODELS = {
+    MOTOR_MODEL_DAMIAO: "DaMiao DM-J6248P",
+    MOTOR_MODEL_LANDE: "LANDA PA043",
+}
+
 TWO_PI = 2.0 * math.pi
 CMD_HZ = 25.0
 MAX_SPEED_DEG_S = 60.0
 DEFAULT_SPEED_DEG_S = 18.0
 DEFAULT_KP = 4.0
 DEFAULT_KD = 2.0
-# 6248P MIT 位置編碼約 ±12.566 rad，轉圈壓測改走速度模式，避免角度累加爆限。
 SPIN_POS_CLAMP = 12.0
 SCAN_ID_MIN = 0x01
 SCAN_ID_MAX = 0x10
@@ -49,9 +57,15 @@ _loop_stop = threading.Event()
 _loop_thread: Optional[threading.Thread] = None
 _channel = ""
 _adapter_kind = ""
+_motor_model = MOTOR_MODEL_DAMIAO
+_control_mode = "mit"
 _error_seq = 0
 _errors: list[dict[str, Any]] = []
 _send_fail = 0
+
+
+def _is_lande() -> bool:
+    return _motor_model == MOTOR_MODEL_LANDE
 
 
 def _note_error(msg: str) -> None:
@@ -86,7 +100,9 @@ def _sync_focus_aliases() -> None:
     _cmd_pos = tr.get("cmd_pos")
     _target_pos = tr.get("target_pos")
     _enabled = any(
-        bool(_tracks.get(mid, {}).get("enabled")) for mid in _selected_ids if mid in _tracks
+        bool(_tracks.get(mid, {}).get("enabled"))
+        for mid in _selected_ids
+        if mid in _tracks
     )
 
 
@@ -109,18 +125,23 @@ def _reset_tracks(
             "cmd_pos": pos if pos is not None else prev.get("cmd_pos"),
             "target_pos": pos if pos is not None else prev.get("target_pos"),
             "spin_dir": 0,
+            "spin_disp": None,
             "fail": 0,
         }
+
     if keep_selected:
         _selected_ids = [mid for mid in keep_selected if mid in _tracks]
     else:
         _selected_ids = list(found_ids)
+
     if not _selected_ids and found_ids:
         _selected_ids = [found_ids[0]]
+
     if prefer_focus in _tracks:
         _focus_id = prefer_focus
     elif _focus_id not in _tracks:
         _focus_id = _selected_ids[0] if _selected_ids else None
+
     _sync_focus_aliases()
 
 
@@ -130,6 +151,7 @@ def _parse_ids(data: dict[str, Any]) -> list[int]:
         raw = [data.get("id")]
     if raw is None:
         return list(_selected_ids)
+
     ids: list[int] = []
     seen: set[int] = set()
     for item in raw:
@@ -151,14 +173,17 @@ def _motors_payload() -> list[dict[str, Any]]:
                 motor = _controller.get_motor(mid)
             except KeyError:
                 motor = None
+
         state = (motor.get_states() if motor is not None else None) or {}
         tr = _tracks.get(mid, {})
         pos = state.get("pos")
         if pos is None:
             pos = tr.get("cmd_pos")
+
         disp = tr.get("spin_disp") if tr.get("spin_dir") else None
         show_pos = disp if disp is not None else pos
         tgt = tr.get("target_pos")
+
         item = dict(info)
         item.update(
             {
@@ -173,7 +198,9 @@ def _motors_payload() -> list[dict[str, Any]]:
                 "status": state.get("status") or info.get("status"),
                 "vel": state.get("vel"),
                 "torq": state.get("torq"),
-                "t_mos": state.get("t_mos"),
+                "t_mos": state.get("t_mos") or state.get("temperature"),
+                "raw_byte6": state.get("raw_byte6"),
+                "raw_byte7": state.get("raw_byte7"),
             }
         )
         out.append(item)
@@ -188,23 +215,31 @@ def _state_payload() -> dict[str, Any]:
     if pos is None:
         pos = _cmd_pos
     vel = raw.get("vel")
+
     motors = _motors_payload()
     enabled_ids = [mid for mid, tr in _tracks.items() if tr.get("enabled")]
     spinning_ids = [mid for mid, tr in _tracks.items() if tr.get("spin_dir")]
+
     spin_dir = 0
     if _focus_id in _tracks:
         spin_dir = int(_tracks[_focus_id].get("spin_dir") or 0)
     if not spin_dir and spinning_ids:
         spin_dir = int(_tracks[spinning_ids[0]].get("spin_dir") or 0)
+
     show_pos = pos
     if _focus_id in _tracks and _tracks[_focus_id].get("spin_dir"):
         disp = _tracks[_focus_id].get("spin_disp")
         if disp is not None:
             show_pos = disp
+
     return {
         "connected": _controller is not None,
         "channel": _channel,
         "adapter": _adapter_kind,
+        "motor_model": _motor_model,
+        "motor_model_name": MOTOR_MODELS.get(_motor_model, _motor_model),
+        "control_mode": _control_mode,
+        "pa043_motion_ready": False,
         "enabled": _enabled,
         "motor_id": _focus_id,
         "selected_ids": list(_selected_ids),
@@ -219,8 +254,10 @@ def _state_payload() -> dict[str, Any]:
         "pos_deg_mod": _deg_mod(None if show_pos is None else float(show_pos)),
         "vel": vel,
         "torq": raw.get("torq"),
-        "t_mos": raw.get("t_mos"),
+        "t_mos": raw.get("t_mos") or raw.get("temperature"),
         "t_rotor": raw.get("t_rotor"),
+        "raw_byte6": raw.get("raw_byte6"),
+        "raw_byte7": raw.get("raw_byte7"),
         "target_rad": _target_pos,
         "target_deg_mod": _deg_mod(_target_pos),
         "cmd_rad": _cmd_pos,
@@ -240,7 +277,6 @@ def _nearest_target(current: float, clicked_deg: float) -> float:
 
 
 def _send_mit(motor, pos: float, vel: float, kp: float, kd: float) -> None:
-    # send_raw skips damiao's per-command enable/clear-error side effects.
     data = motor.encode_cmd_msg(pos, vel, 0.0, kp, kd)
     motor.send_raw(data)
 
@@ -251,10 +287,14 @@ def _state_pos(motor) -> Optional[float]:
     return None if pos is None else float(pos)
 
 
+# -------------------- DaMiao-specific helpers --------------------
+
 def _ensure_motor(controller, motor_id: int, feedback_id: int = 0x00):
     try:
         return controller.add_motor(
-            motor_id=motor_id, feedback_id=feedback_id, motor_type=MOTOR_TYPE
+            motor_id=motor_id,
+            feedback_id=feedback_id,
+            motor_type=MOTOR_TYPE,
         )
     except ValueError:
         return controller.get_motor(motor_id)
@@ -306,12 +346,6 @@ def _wait_pos(motor, timeout: float = 0.45) -> Optional[float]:
     return _state_pos(motor)
 
 
-def _hold_at(motor, pos: float, kp: float, kd: float, times: int = 6) -> None:
-    for _ in range(times):
-        _send_mit(motor, pos, 0.0, kp, kd)
-        time.sleep(0.015)
-
-
 def _read_register_fresh(motor, rid: int, timeout: float = 0.7) -> Optional[int]:
     with motor.registers_lock:
         motor.registers.pop(rid, None)
@@ -337,38 +371,107 @@ def _clear_spin_locked(ids: Optional[list[int]] = None) -> None:
             _tracks[mid]["spin_disp"] = None
 
 
+def _motor_info(motor) -> dict[str, Any]:
+    state = motor.get_states() or {}
+    arb = state.get("arbitration_id")
+    info: dict[str, Any] = {
+        "id": motor.motor_id,
+        "esc_id": motor.motor_id,
+        "mst_id": motor.feedback_id if motor.feedback_id else arb,
+        "arb_id": arb,
+        "pos": state.get("pos"),
+        "status": state.get("status"),
+    }
+    esc = _read_register_fresh(motor, ESC_ID_RID)
+    mst = _read_register_fresh(motor, MST_ID_RID)
+    if esc is not None:
+        info["esc_id"] = esc
+    if mst is not None:
+        info["mst_id"] = mst
+        if motor.feedback_id != mst:
+            motor.feedback_id = mst
+    return info
+
+
+def _scan_damiao(controller) -> list[dict[str, Any]]:
+    controller.flush_bus()
+    found_ids: set[int] = set()
+
+    for motor_id in range(SCAN_ID_MIN, SCAN_ID_MAX + 1):
+        motor = _ensure_motor(controller, motor_id)
+        motor.state = {}
+        try:
+            _query_status(motor)
+        except Exception:
+            _send_mit(motor, 0.0, 0.0, 0.0, 0.0)
+
+        deadline = time.perf_counter() + 0.12
+        while time.perf_counter() < deadline:
+            time.sleep(0.015)
+            state = motor.get_states() or {}
+            if state.get("can_id") is None:
+                continue
+            found_ids.add(motor_id)
+            break
+
+    for motor_id in list(controller.motors):
+        if motor_id not in found_ids:
+            _drop_motor(controller, motor_id)
+
+    return [_motor_info(controller.get_motor(mid)) for mid in sorted(found_ids)]
+
+
+def _scan_lande(controller: LandeBackend) -> list[dict[str, Any]]:
+    return controller.scan(start_id=0x00, end_id=0x10)
+
+
+def _select_scanned_motor(controller, motors: list[dict[str, Any]], prefer_id: Optional[int]):
+    if not motors:
+        return None, None
+    chosen_id = prefer_id if prefer_id in {item["id"] for item in motors} else motors[0]["id"]
+    motor = controller.get_motor(chosen_id)
+    pos = _state_pos(motor)
+    if pos is None:
+        pos = _wait_pos(motor, timeout=0.3)
+    return motor, pos
+
+
+# -------------------- DaMiao control loop --------------------
+
 def _control_loop() -> None:
     global _send_fail
     dt = 1.0 / CMD_HZ
+
     while not _loop_stop.is_set():
         t0 = time.perf_counter()
+
         with _lock:
             controller = _controller
+            motor_model = _motor_model
             max_speed = _max_speed_rad_s
             kp = _kp
             kd = _kd
             jobs = []
-            for mid, tr in _tracks.items():
-                if not tr.get("enabled"):
-                    continue
-                cmd = tr.get("cmd_pos")
-                target = tr.get("target_pos")
-                spin_dir = int(tr.get("spin_dir") or 0)
-                if controller is None:
-                    continue
-                if spin_dir:
-                    jobs.append((mid, cmd, target, spin_dir, tr.get("spin_disp")))
-                elif cmd is None or target is None:
-                    continue
-                else:
-                    jobs.append((mid, cmd, target, 0, None))
+
+            if motor_model == MOTOR_MODEL_DAMIAO:
+                for mid, tr in _tracks.items():
+                    if not tr.get("enabled"):
+                        continue
+                    cmd = tr.get("cmd_pos")
+                    target = tr.get("target_pos")
+                    spin_dir = int(tr.get("spin_dir") or 0)
+                    if controller is None:
+                        continue
+                    if spin_dir:
+                        jobs.append((mid, cmd, target, spin_dir, tr.get("spin_disp")))
+                    elif cmd is not None and target is not None:
+                        jobs.append((mid, cmd, target, 0, None))
+
         if jobs and controller is not None:
-            for i, (mid, cmd, target, spin_dir, spin_disp) in enumerate(jobs):
+            for i, (mid, cmd, target, spin_dir, _spin_disp) in enumerate(jobs):
                 try:
                     motor = controller.get_motor(mid)
                     if spin_dir:
-                        # Same MIT position+vel path as the dial. kp=0 velocity
-                        # mode often only moves the free joint on a multi-motor bus.
                         if cmd is None:
                             cmd = 0.0
                         step = max_speed * dt
@@ -403,6 +506,7 @@ def _control_loop() -> None:
                             if mid in _tracks:
                                 _tracks[mid]["cmd_pos"] = cmd
                                 _tracks[mid]["fail"] = 0
+
                     _send_fail = 0
                 except Exception as exc:
                     with _lock:
@@ -420,8 +524,10 @@ def _control_loop() -> None:
                                 _tracks[mid]["fail"] = 0
                             _sync_focus_aliases()
                         _note_error(f"馬達 0x{mid:02X} 連續送指令失敗，已自動 Disable。")
+
                 if i + 1 < len(jobs):
                     time.sleep(0.002)
+
         elapsed = time.perf_counter() - t0
         time.sleep(max(0.0, dt - elapsed))
 
@@ -431,13 +537,14 @@ def _ensure_loop() -> None:
     if _loop_thread is not None and _loop_thread.is_alive():
         return
     _loop_stop.clear()
-    _loop_thread = threading.Thread(target=_control_loop, name="mit-loop", daemon=True)
+    _loop_thread = threading.Thread(target=_control_loop, name="motor-loop", daemon=True)
     _loop_thread.start()
 
 
 def _shutdown_controller() -> None:
     global _controller, _motor, _enabled, _cmd_pos, _target_pos, _motors_found
     global _channel, _adapter_kind, _tracks, _selected_ids, _focus_id
+
     with _lock:
         _enabled = False
         _cmd_pos = None
@@ -451,6 +558,7 @@ def _shutdown_controller() -> None:
         _motors_found = []
         _channel = ""
         _adapter_kind = ""
+
     if controller is not None:
         try:
             controller.shutdown()
@@ -458,70 +566,7 @@ def _shutdown_controller() -> None:
             _note_error(f"關閉轉接器失敗：{exc}")
 
 
-def _motor_info(motor) -> dict[str, Any]:
-    state = motor.get_states() or {}
-    arb = state.get("arbitration_id")
-    info: dict[str, Any] = {
-        "id": motor.motor_id,
-        "esc_id": motor.motor_id,
-        "mst_id": motor.feedback_id if motor.feedback_id else arb,
-        "arb_id": arb,
-        "pos": state.get("pos"),
-        "status": state.get("status"),
-    }
-    esc = _read_register_fresh(motor, ESC_ID_RID)
-    mst = _read_register_fresh(motor, MST_ID_RID)
-    if esc is not None:
-        info["esc_id"] = esc
-    if mst is not None:
-        info["mst_id"] = mst
-        if motor.feedback_id != mst:
-            motor.feedback_id = mst
-    return info
-
-
-def _scan(controller, motor_type: str) -> list[dict[str, Any]]:
-    """Probe each Node ID one-by-one. Burst scans drop replies on USB-CAN-A."""
-    del motor_type  # motors are created with MOTOR_TYPE
-    controller.flush_bus()
-    found_ids: set[int] = set()
-    for motor_id in range(SCAN_ID_MIN, SCAN_ID_MAX + 1):
-        motor = _ensure_motor(controller, motor_id)
-        motor.state = {}
-        try:
-            _query_status(motor)
-        except Exception:
-            _send_mit(motor, 0.0, 0.0, 0.0, 0.0)
-        deadline = time.perf_counter() + 0.12
-        while time.perf_counter() < deadline:
-            time.sleep(0.015)
-            state = motor.get_states() or {}
-            if state.get("can_id") is None:
-                continue
-            found_ids.add(motor_id)
-            break
-
-    for motor_id in list(controller.motors):
-        if motor_id not in found_ids:
-            _drop_motor(controller, motor_id)
-
-    found: list[dict[str, Any]] = []
-    for motor_id in sorted(found_ids):
-        motor = controller.get_motor(motor_id)
-        found.append(_motor_info(motor))
-    return found
-
-
-def _select_scanned_motor(controller, motors: list[dict[str, Any]], prefer_id: Optional[int]):
-    if not motors:
-        return None, None
-    chosen_id = prefer_id if prefer_id in {item["id"] for item in motors} else motors[0]["id"]
-    motor = controller.get_motor(chosen_id)
-    pos = _state_pos(motor)
-    if pos is None:
-        pos = _wait_pos(motor, timeout=0.3)
-    return motor, pos
-
+# -------------------- Flask API --------------------
 
 @app.route("/")
 def index():
@@ -535,31 +580,44 @@ def ports():
 
 @app.route("/api/connect", methods=["POST"])
 def connect():
-    global _controller, _motor, _motors_found, _channel, _adapter_kind, _cmd_pos, _target_pos
+    global _controller, _motors_found, _channel, _adapter_kind
+    global _motor_model, _control_mode
+
     data = request.get_json(silent=True) or {}
     channel = str(data.get("channel") or "").strip()
     adapter = str(data.get("adapter") or "auto")
+    motor_model = str(data.get("motor_model") or MOTOR_MODEL_DAMIAO)
+
+    if motor_model not in MOTOR_MODELS:
+        return jsonify({"success": False, "error": f"不支援的 Motor Model: {motor_model}"}), 400
+
     ports = list_adapter_ports()
     if not channel:
         if not ports:
-            return jsonify({"success": False, "error": "找不到 COM 埠，請插入 Zubax Babel 或 USB-CAN-A。"}), 400
+            return jsonify({"success": False, "error": "找不到 COM 埠，請先插入 CAN 轉接器。"}), 400
         channel = ports[0]["device"]
+
     if not looks_like_serial_channel(channel):
-        return jsonify(
-            {
-                "success": False,
-                "error": "請選 COM 埠（例如 COM5）。Windows 沒有 socketcan。",
-            }
-        ), 400
+        return jsonify({"success": False, "error": "請選 COM 埠（例如 COM5）。"}), 400
 
     _shutdown_controller()
 
     try:
-        from damiao_motor import DaMiaoController
-
         kind = detect_kind(channel, adapter)
-        controller = DaMiaoController(channel=channel, bustype=kind)
-        motors = _scan(controller, MOTOR_TYPE)
+
+        if motor_model == MOTOR_MODEL_DAMIAO:
+            from damiao_motor import DaMiaoController
+
+            controller = DaMiaoController(channel=channel, bustype=kind)
+            motors = _scan_damiao(controller)
+            control_mode = "mit"
+
+        else:
+            controller = LandeBackend(channel=channel, adapter=kind, bitrate=1_000_000)
+            motors = _scan_lande(controller)
+            control_mode = motors[0].get("control_mode_key") if motors else None
+            control_mode = control_mode or "unknown"
+
         if not motors:
             try:
                 controller.shutdown()
@@ -568,24 +626,23 @@ def connect():
             return jsonify(
                 {
                     "success": False,
-                    "error": "轉接器已開，但沒掃到馬達。請檢查 24V、CAN_H/CAN_L、120Ω 終端，並關閉其他佔用 COM 的程式。若 bus 上有兩顆但都是 ID 0x01，請先單顆接上寫入不同 Node ID。",
+                    "error": "轉接器已開，但沒掃到馬達。請檢查電源、CAN_H/CAN_L、1 Mbps、終端電阻與 COM 是否被占用。",
                 }
             ), 400
-        motor, pos = _select_scanned_motor(controller, motors, None)
-        if motor is None:
-            raise RuntimeError("掃到馬達但無法選取")
-        if pos is None:
-            pos = 0.0
-            _note_error("連線時讀不到位置，暫以 0 顯示；Enable 前會再讀一次。")
+
         with _lock:
             _controller = controller
             _motors_found = motors
             _channel = channel
             _adapter_kind = kind
+            _motor_model = motor_model
+            _control_mode = control_mode
             _reset_tracks(controller, motors)
             payload = _state_payload()
+
         _ensure_loop()
         return jsonify({"success": True, "state": payload})
+
     except Exception as exc:
         _note_error(f"連線失敗：{exc}")
         traceback.print_exc()
@@ -595,85 +652,155 @@ def connect():
 
 @app.route("/api/disconnect", methods=["POST"])
 def disconnect():
-    motors = []
-    with _lock:
-        controller = _controller
-        enabled_ids = [mid for mid, tr in _tracks.items() if tr.get("enabled")]
-        for mid in enabled_ids:
-            _tracks[mid]["enabled"] = False
-            _tracks[mid]["spin_dir"] = 0
-        _sync_focus_aliases()
-        if controller is not None:
+    if _motor_model == MOTOR_MODEL_DAMIAO:
+        motors = []
+        with _lock:
+            controller = _controller
+            enabled_ids = [mid for mid, tr in _tracks.items() if tr.get("enabled")]
             for mid in enabled_ids:
-                try:
-                    motors.append(controller.get_motor(mid))
-                except KeyError:
-                    pass
-    for motor in motors:
-        try:
-            pos = _state_pos(motor)
-            if pos is not None:
-                _send_mit(motor, pos, 0.0, 0.0, 0.0)
-            motor.disable()
-        except Exception as exc:
-            _note_error(f"Disable 失敗：{exc}")
+                _tracks[mid]["enabled"] = False
+                _tracks[mid]["spin_dir"] = 0
+            _sync_focus_aliases()
+            if controller is not None:
+                for mid in enabled_ids:
+                    try:
+                        motors.append(controller.get_motor(mid))
+                    except KeyError:
+                        pass
+
+        for motor in motors:
+            try:
+                pos = _state_pos(motor)
+                if pos is not None:
+                    _send_mit(motor, pos, 0.0, 0.0, 0.0)
+                motor.disable()
+            except Exception as exc:
+                _note_error(f"Disable 失敗：{exc}")
+
     _shutdown_controller()
     return jsonify({"success": True})
 
 
 @app.route("/api/select", methods=["POST"])
 def select_motor():
-    global _selected_ids, _focus_id
+    global _selected_ids, _focus_id, _control_mode
     data = request.get_json(silent=True) or {}
+
     with _lock:
         if _controller is None:
             return jsonify({"success": False, "error": "尚未連線"}), 400
+
         ids = _parse_ids(data)
         valid = [mid for mid in ids if mid in _tracks]
         if not valid and ids:
             return jsonify({"success": False, "error": "選擇的 Node ID 不在掃描結果裡"}), 400
+
         _selected_ids = valid
         focus = data.get("focus")
         if focus is not None:
             focus = int(focus)
             if focus in _tracks:
                 _focus_id = focus
+
         if _selected_ids and _focus_id not in _selected_ids:
             _focus_id = _selected_ids[0]
+
+        if _is_lande() and _focus_id is not None:
+            for item in _motors_found:
+                if int(item["id"]) == _focus_id:
+                    _control_mode = item.get("control_mode_key") or "unknown"
+                    break
+
         _sync_focus_aliases()
         return jsonify({"success": True, "state": _state_payload()})
+
+
+@app.route("/api/control_mode", methods=["POST"])
+def set_control_mode():
+    global _motors_found, _control_mode
+    data = request.get_json(silent=True) or {}
+    mode = str(data.get("mode") or "").strip()
+
+    with _lock:
+        controller = _controller
+        ids = [mid for mid in _parse_ids(data) if mid in _tracks]
+        keep_selected = list(_selected_ids)
+        keep_focus = _focus_id
+
+    if controller is None:
+        return jsonify({"success": False, "error": "尚未連線"}), 400
+
+    if _motor_model == MOTOR_MODEL_DAMIAO:
+        if mode not in ("", "mit"):
+            return jsonify({"success": False, "error": "DaMiao 目前 GUI 使用 MIT 模式。"}), 400
+        _control_mode = "mit"
+        return jsonify({"success": True, "state": _state_payload(), "message": "DaMiao 使用 MIT 模式。"})
+
+    if mode not in ("servo", "torque_position", "velocity", "torque"):
+        return jsonify({"success": False, "error": f"不支援的 PA043 Control Mode: {mode}"}), 400
+
+    if not ids:
+        return jsonify({"success": False, "error": "請先勾選要切換模式的 PA043。"}), 400
+
+    try:
+        for mid in ids:
+            controller.set_control_mode(mid, mode, save=True)
+
+        motors = _scan_lande(controller)
+        with _lock:
+            _motors_found = motors
+            _control_mode = mode
+            _reset_tracks(controller, motors, keep_selected, prefer_focus=keep_focus)
+            payload = _state_payload()
+
+        return jsonify(
+            {
+                "success": True,
+                "state": payload,
+                "message": f"PA043 已切換到 {mode}；馬達維持 Reset State。",
+            }
+        )
+    except Exception as exc:
+        _note_error(f"切換 PA043 Control Mode 失敗：{exc}")
+        traceback.print_exc()
+        return jsonify({"success": False, "error": str(exc)}), 500
 
 
 def _enable_group(motors, kp: float, kd: float) -> dict[int, float]:
     holds: dict[int, float] = {}
     missing: list[int] = []
+
     for motor in motors:
         try:
             motor.ensure_control_mode("MIT")
         except Exception as exc:
             _note_error(f"0x{motor.motor_id:02X} 確認 MIT 模式失敗（繼續 Enable）：{exc}")
+
         pos = _wait_pos(motor, timeout=0.45)
         if pos is None:
             missing.append(motor.motor_id)
             continue
+
         holds[motor.motor_id] = pos
         with _lock:
             if motor.motor_id in _tracks:
                 _tracks[motor.motor_id]["cmd_pos"] = pos
                 _tracks[motor.motor_id]["target_pos"] = pos
+
     if missing and not holds:
-        raise RuntimeError(
-            "讀不到目前位置，已取消 Enable，避免馬達衝到 0。請再按一次掃描後重試。"
-        )
+        raise RuntimeError("讀不到目前位置，已取消 Enable，避免馬達衝到 0。")
     if missing:
         _note_error("部分馬達讀不到位置，已跳過：" + ", ".join(f"0x{i:02X}" for i in missing))
+
     ready = [m for m in motors if m.motor_id in holds]
     for motor in ready:
         motor.enable()
+
     for _ in range(6):
         for motor in ready:
             _send_mit(motor, holds[motor.motor_id], 0.0, kp, kd)
         time.sleep(0.015)
+
     for motor in ready:
         pos = _wait_pos(motor, timeout=0.2) or holds[motor.motor_id]
         holds[motor.motor_id] = pos
@@ -685,11 +812,20 @@ def _enable_group(motors, kp: float, kd: float) -> dict[int, float]:
                 _tracks[motor.motor_id]["spin_dir"] = 0
                 _tracks[motor.motor_id]["spin_disp"] = None
                 _tracks[motor.motor_id]["fail"] = 0
+
     return holds
 
 
 @app.route("/api/enable", methods=["POST"])
 def enable():
+    if _is_lande():
+        return jsonify(
+            {
+                "success": False,
+                "error": "PA043 已完成連線/掃描/模式切換整合，但運動 Enable 暫時鎖定；先驗證實機 feedback 再開放。",
+            }
+        ), 409
+
     data = request.get_json(silent=True) or {}
     with _lock:
         controller = _controller
@@ -700,29 +836,32 @@ def enable():
         ids = [mid for mid in _parse_ids(data) if mid in _tracks]
         if not ids:
             return jsonify({"success": False, "error": "請先勾選要 Enable 的馬達"}), 400
+
     motors = []
     for mid in ids:
         try:
             motors.append(controller.get_motor(mid))
         except KeyError:
             return jsonify({"success": False, "error": f"沒有馬達 0x{mid:02X}"}), 404
+
     try:
         holds = _enable_group(motors, kp, kd)
     except Exception as exc:
         _note_error(f"Enable 失敗：{exc}")
         traceback.print_exc()
         return jsonify({"success": False, "error": f"無法 Enable / 切到 MIT：{exc}"}), 500
+
     with _lock:
         _sync_focus_aliases()
         payload = _state_payload()
     _ensure_loop()
-    hold_rad = holds.get(_focus_id) if holds else None
-    return jsonify({"success": True, "state": payload, "hold_rad": hold_rad, "enabled_ids": list(holds)})
+    return jsonify({"success": True, "state": payload, "enabled_ids": list(holds)})
 
 
 @app.route("/api/disable", methods=["POST"])
 def disable():
     data = request.get_json(silent=True) or {}
+
     with _lock:
         controller = _controller
         ids = [mid for mid in _parse_ids(data) if mid in _tracks]
@@ -730,6 +869,7 @@ def disable():
             _tracks[mid]["enabled"] = False
             _tracks[mid]["spin_dir"] = 0
         _sync_focus_aliases()
+
     if controller is not None:
         for mid in ids:
             try:
@@ -737,30 +877,37 @@ def disable():
             except KeyError:
                 continue
             try:
-                hold = _state_pos(motor)
-                if hold is None:
-                    hold = _tracks.get(mid, {}).get("cmd_pos")
-                if hold is not None:
-                    _send_mit(motor, float(hold), 0.0, 0.0, 0.0)
-                time.sleep(0.01)
+                if _motor_model == MOTOR_MODEL_DAMIAO:
+                    hold = _state_pos(motor)
+                    if hold is None:
+                        hold = _tracks.get(mid, {}).get("cmd_pos")
+                    if hold is not None:
+                        _send_mit(motor, float(hold), 0.0, 0.0, 0.0)
+                    time.sleep(0.01)
                 motor.disable()
             except Exception as exc:
                 _note_error(f"Disable 0x{mid:02X} 失敗：{exc}")
+
     with _lock:
         return jsonify({"success": True, "state": _state_payload()})
 
 
 @app.route("/api/target", methods=["POST"])
 def set_target():
+    if _is_lande():
+        return jsonify({"success": False, "error": "PA043 運動命令目前鎖定，尚未開放位置目標。"}), 409
+
     data = request.get_json(silent=True) or {}
     with _lock:
         if _controller is None:
             return jsonify({"success": False, "error": "尚未連線"}), 400
+
         ids = [mid for mid in _parse_ids(data) if mid in _tracks]
         if not ids:
             return jsonify({"success": False, "error": "請先勾選要轉動的馬達"}), 400
         if "deg" not in data and "rad" not in data:
             return jsonify({"success": False, "error": "需要 deg 或 rad"}), 400
+
         any_enabled = False
         for mid in ids:
             _tracks[mid]["spin_dir"] = 0
@@ -773,12 +920,15 @@ def set_target():
                 current = 0.0
             if _tracks[mid].get("cmd_pos") is None:
                 _tracks[mid]["cmd_pos"] = current
+
             if "deg" in data:
                 _tracks[mid]["target_pos"] = _nearest_target(float(current), float(data["deg"]))
             else:
                 _tracks[mid]["target_pos"] = float(data["rad"])
+
             if _tracks[mid].get("enabled"):
                 any_enabled = True
+
         _sync_focus_aliases()
         if not any_enabled:
             return jsonify(
@@ -808,6 +958,9 @@ def settings():
 
 @app.route("/api/spin", methods=["POST"])
 def spin():
+    if _is_lande():
+        return jsonify({"success": False, "error": "PA043 持續轉圈目前鎖定。"}), 409
+
     data = request.get_json(silent=True) or {}
     want = bool(data.get("enable"))
     try:
@@ -815,6 +968,7 @@ def spin():
     except (TypeError, ValueError):
         direction = 1
     direction = 1 if direction >= 0 else -1
+
     with _lock:
         controller = _controller
         kd = _kd
@@ -823,6 +977,7 @@ def spin():
             return jsonify({"success": False, "error": "尚未連線"}), 400
         ready = [mid for mid, tr in _tracks.items() if tr.get("enabled")]
         spinning = [mid for mid, tr in _tracks.items() if tr.get("spin_dir")]
+
         if want:
             if not ready:
                 return jsonify({"success": False, "error": "請先 Enable 要壓測的馬達，再開始轉圈"}), 400
@@ -833,21 +988,16 @@ def spin():
                 _tracks[mid]["spin_dir"] = direction
             _sync_focus_aliases()
             payload = _state_payload()
-            ids_txt = ", ".join(f"0x{i:02X}" for i in ready)
-            msg = (
-                "持續轉圈壓測已開始（"
-                + ("順時針" if direction > 0 else "逆時針")
-                + f"，{len(ready)} 顆：{ids_txt}）。"
-            )
+            msg = "持續轉圈壓測已開始。"
         else:
             stopped = list(spinning)
             _clear_spin_locked(stopped)
             _sync_focus_aliases()
-            payload = None
-            msg = None
+
     if want:
         _ensure_loop()
-        return jsonify({"success": True, "state": payload, "message": msg, "spinning_ids": ready})
+        return jsonify({"success": True, "state": payload, "message": msg})
+
     holds: dict[int, float] = {}
     for mid in stopped:
         try:
@@ -866,6 +1016,7 @@ def spin():
             _send_mit(motor, pos, 0.0, kp, kd)
         except Exception as exc:
             _note_error(f"停止轉圈後鎖定 0x{mid:02X} 失敗：{exc}")
+
     with _lock:
         for mid, pos in holds.items():
             if mid in _tracks:
@@ -890,7 +1041,8 @@ def state():
 
 @app.route("/api/scan", methods=["POST"])
 def scan_bus():
-    global _motors_found
+    global _motors_found, _control_mode
+
     with _lock:
         controller = _controller
         keep_selected = list(_selected_ids)
@@ -900,29 +1052,42 @@ def scan_bus():
             _tracks[mid]["enabled"] = False
             _tracks[mid]["spin_dir"] = 0
         _sync_focus_aliases()
+
     if controller is None:
         return jsonify({"success": False, "error": "尚未連線"}), 400
-    for mid in enabled_ids:
-        try:
-            controller.get_motor(mid).disable()
-        except Exception as exc:
-            _note_error(f"掃描前 Disable 0x{mid:02X} 失敗：{exc}")
+
+    if _motor_model == MOTOR_MODEL_DAMIAO:
+        for mid in enabled_ids:
+            try:
+                controller.get_motor(mid).disable()
+            except Exception as exc:
+                _note_error(f"掃描前 Disable 0x{mid:02X} 失敗：{exc}")
+
     try:
-        motors = _scan(controller, MOTOR_TYPE)
+        if _motor_model == MOTOR_MODEL_DAMIAO:
+            motors = _scan_damiao(controller)
+        else:
+            motors = _scan_lande(controller)
+
         with _lock:
             _motors_found = motors
+            if _motor_model == MOTOR_MODEL_LANDE and motors:
+                focus_info = next(
+                    (m for m in motors if int(m["id"]) == keep_focus),
+                    motors[0],
+                )
+                _control_mode = focus_info.get("control_mode_key") or "unknown"
             _reset_tracks(controller, motors, keep_selected, prefer_focus=keep_focus)
             payload = _state_payload()
-        ids = ", ".join(
-            f"0x{item['id']:02X}(MST 0x{int(item.get('mst_id') or 0):02X})" for item in motors
+
+        ids = ", ".join(f"0x{int(item['id']):02X}" for item in motors) or "(無)"
+        return jsonify(
+            {
+                "success": True,
+                "state": payload,
+                "message": f"掃到 {len(motors)} 顆馬達：{ids}",
+            }
         )
-        if not motors:
-            msg = "bus 上沒掃到馬達 Node ID。若接了兩顆卻只看到一顆，通常是兩顆都還是 0x01，請先單顆寫入不同 ID。"
-        else:
-            msg = f"掃到 {len(motors)} 顆馬達 Node ID：{ids}"
-            if len(motors) == 1:
-                msg += "。若實際接了兩顆，請先單顆接上把其中一顆改成不同 Sender CAN ID 再並聯。"
-        return jsonify({"success": True, "state": payload, "message": msg})
     except Exception as exc:
         _note_error(f"掃描失敗：{exc}")
         traceback.print_exc()
@@ -931,13 +1096,23 @@ def scan_bus():
 
 @app.route("/api/flash_id", methods=["POST"])
 def flash_id():
-    global _enabled, _motor, _cmd_pos, _target_pos, _motors_found
+    global _motors_found
+
+    if _is_lande():
+        return jsonify(
+            {
+                "success": False,
+                "error": "PA043 Motor ID 使用 Parameter 36；此版先保留模式切換，ID 寫入下一階段再接入 GUI。",
+            }
+        ), 409
+
     data = request.get_json(silent=True) or {}
     joint_name = str(data.get("joint_name", ""))
     sender_can_id = int(data.get("sender_can_id", 0))
     receiver_master_id = int(data.get("receiver_master_id", 0))
+
     if sender_can_id < 1 or sender_can_id > 15:
-        return jsonify({"success": False, "error": "Sender CAN ID 必須是 1–15（MIT 回授只帶 4-bit Node ID）"}), 400
+        return jsonify({"success": False, "error": "Sender CAN ID 必須是 1–15"}), 400
     if receiver_master_id < 0 or receiver_master_id > 0x7FF:
         return jsonify({"success": False, "error": "Receiver / Master ID 必須是 0–0x7FF"}), 400
 
@@ -949,7 +1124,7 @@ def flash_id():
         motor = _motor
         controller = _controller
         if motor is None or controller is None:
-            return jsonify({"success": False, "error": "尚未連線，或請先點選要燒錄的那顆馬達"}), 400
+            return jsonify({"success": False, "error": "尚未連線，或請先點選要燒錄的馬達"}), 400
 
     try:
         old_id = motor.motor_id
@@ -959,87 +1134,45 @@ def flash_id():
             pass
         time.sleep(0.05)
 
-        # MST_ID first, while the motor still answers on the old ESC_ID.
         motor.write_register(MST_ID_RID, receiver_master_id)
         time.sleep(0.08)
         motor.write_register(ESC_ID_RID, sender_can_id)
         time.sleep(0.08)
         _remap_motor(controller, motor, sender_can_id, receiver_master_id)
 
-        # After ESC_ID writes to RAM, save must address the new ID.
-        # Some firmware still accepts the old ID until reboot, so save both.
         motor.store_parameters()
         time.sleep(0.05)
         if old_id != sender_can_id:
             _run_as_id(motor, old_id, motor.store_parameters)
         time.sleep(1.5)
 
-        with motor.registers_lock:
-            motor.registers.pop(ESC_ID_RID, None)
-            motor.registers.pop(MST_ID_RID, None)
-
-        _query_status(motor)
-        time.sleep(0.15)
-        esc = _read_register_fresh(motor, ESC_ID_RID, timeout=1.0)
-        mst = _read_register_fresh(motor, MST_ID_RID, timeout=1.0)
-        if esc is None:
-            # Motor may have rebooted; probe new then old ID.
-            for probe_id in (sender_can_id, old_id):
-                probe = _ensure_motor(controller, probe_id)
-                _query_status(probe)
-                time.sleep(0.12)
-                if _state_pos(probe) is not None or (probe.get_states() or {}).get("can_id") is not None:
-                    motor = probe
-                    esc = _read_register_fresh(probe, ESC_ID_RID, timeout=0.8)
-                    mst = _read_register_fresh(probe, MST_ID_RID, timeout=0.8)
-                    break
-
-        motors = _scan(controller, MOTOR_TYPE)
-        if sender_can_id in {item["id"] for item in motors}:
-            motor = controller.get_motor(sender_can_id)
-        elif motors:
-            motor = controller.get_motor(motors[0]["id"])
-        pos = _state_pos(motor)
-        if pos is None:
-            pos = _wait_pos(motor, timeout=0.3) if motor is not None else None
-
+        motors = _scan_damiao(controller)
         with _lock:
             _motors_found = motors
             keep = [sender_can_id] if sender_can_id in {item["id"] for item in motors} else None
             _reset_tracks(controller, motors, keep, prefer_focus=sender_can_id)
             payload = _state_payload()
 
-        persisted = esc == sender_can_id
-        mst_ok = mst == receiver_master_id
-        ids = ", ".join(
-            f"0x{item['id']:02X}(MST 0x{int(item.get('mst_id') or 0):02X})" for item in motors
-        ) or "(無)"
-        if persisted and mst_ok:
-            msg = (
-                f"[成功] {joint_name} 已寫入並存進 flash：Sender/ESC_ID=0x{sender_can_id:02X}，"
-                f"Receiver/MST_ID=0x{receiver_master_id:02X}。目前 bus：{ids}。"
-                "請再斷電重上電後按「掃描 Node ID」確認沒變回 0x01。"
-            )
-        else:
-            msg = (
-                f"[警告] {joint_name} 已送出寫入，但讀回 ESC_ID={esc!r} MST_ID={mst!r}，"
-                f"期望 0x{sender_can_id:02X}/0x{receiver_master_id:02X}。"
-                f"目前 bus：{ids}。請斷電重上電後再掃描。"
-            )
-        return jsonify({"success": True, "state": payload, "message": msg})
-
+        return jsonify(
+            {
+                "success": True,
+                "state": payload,
+                "message": f"{joint_name or 'Motor'} 已送出 ID 寫入；請斷電重上電後再掃描確認。",
+            }
+        )
     except Exception as exc:
         _note_error(f"燒錄/測試失敗：{exc}")
         traceback.print_exc()
         return jsonify({"success": False, "error": f"燒錄/測試失敗：{exc}"}), 500
 
 
-
 from werkzeug.exceptions import NotFound
+
 
 @app.errorhandler(NotFound)
 def _handle_404(exc):
     return jsonify({"success": False, "error": "Not found"}), 404
+
 
 @app.errorhandler(Exception)
 def _unhandled(exc):
@@ -1051,23 +1184,20 @@ def _unhandled(exc):
 def _quiet_access_log() -> None:
     class _SkipPoll(logging.Filter):
         def filter(self, record: logging.LogRecord) -> bool:
-            msg = record.getMessage()
-            return "/api/state" not in msg
+            return "/api/state" not in record.getMessage()
 
-    werkzeug = logging.getLogger("werkzeug")
-    werkzeug.addFilter(_SkipPoll())
+    logging.getLogger("werkzeug").addFilter(_SkipPoll())
 
 
 def run_server(host: str = "127.0.0.1", port: int = 5000) -> None:
     patch_damiao.apply()
     _quiet_access_log()
     ports = list_adapter_ports()
-    print("自訂 DaMiao GUI（Zubax Babel slcan / USB-CAN-A）")
-    print("Open http://{}:{}".format(host, port))
+    print("OpenArm Motor GUI — DaMiao DM-J6248P / LANDA PA043")
+    print(f"Open http://{host}:{port}")
     if ports:
         for item in ports:
             print("  ", item["label"])
     else:
-        print("尚未偵測到 COM 埠。請插入 Babel 後重新整理頁面。")
-    print("Windows 沒有 socketcan；Babel 走 slcan。請關閉佔用 COM 的其他程式。")
+        print("尚未偵測到 COM 埠。")
     app.run(host=host, port=port, debug=False, use_reloader=False, threaded=True)
