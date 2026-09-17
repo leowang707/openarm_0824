@@ -3,547 +3,255 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>OpenArm Motor GUI</title>
+  <title>OpenArm Universal CAN GUI</title>
   <style>
-    :root {
-      --bg:#12151c; --panel:#1b2030; --line:#2c3448; --text:#e8edf7;
-      --muted:#93a0b8; --current:#5ee0c8; --target:#f3b14e;
-      --danger:#ef6b6b; --ok:#6fbf73; --blue:#3d7dff;
-    }
+    :root { color-scheme: dark; --bg:#11151c; --panel:#1b2230; --line:#33405a; --muted:#93a0b8; --ok:#63c174; --bad:#ef6b6b; --accent:#4c82ff; }
     * { box-sizing:border-box; }
-    body { margin:0; font-family:"Segoe UI","Microsoft JhengHei",sans-serif; background:var(--bg); color:var(--text); }
-    header { padding:16px 24px; border-bottom:1px solid var(--line); display:flex; justify-content:space-between; align-items:center; gap:16px; }
-    h1 { font-size:18px; margin:0; font-weight:600; }
-    .sub { color:var(--muted); font-size:13px; }
-    main { display:grid; grid-template-columns:380px 1fr; gap:20px; padding:20px; }
+    body { margin:0; font-family:Segoe UI,Microsoft JhengHei,sans-serif; background:var(--bg); color:#edf2fb; }
+    main { max-width:1000px; margin:0 auto; padding:22px; display:grid; grid-template-columns:380px 1fr; gap:18px; }
     .card { background:var(--panel); border:1px solid var(--line); border-radius:14px; padding:16px; }
-    label { display:block; font-size:12px; color:var(--muted); margin:8px 0 6px; }
-    input, select { width:100%; background:#10141e; color:var(--text); border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-bottom:8px; }
-    input[type=checkbox] { width:auto; margin:0; }
-    .row { display:flex; gap:8px; flex-wrap:wrap; }
-    .row > * { flex:1; }
-    button { border:0; border-radius:8px; padding:9px 14px; cursor:pointer; font-weight:600; color:inherit; box-shadow:0 2px 0 rgba(0,0,0,.35); }
-    button:hover:not(:disabled) { filter:brightness(1.1); }
-    button:active:not(:disabled) { transform:translateY(2px); box-shadow:none; }
+    h1 { font-size:20px; margin:0 0 14px; }
+    h2 { font-size:15px; margin:16px 0 8px; }
+    label { display:block; color:var(--muted); font-size:12px; margin:9px 0 5px; }
+    input,select,button { width:100%; padding:8px 10px; border-radius:8px; border:1px solid var(--line); background:#101621; color:#edf2fb; }
+    button { cursor:pointer; font-weight:600; }
+    button.primary { background:var(--accent); }
+    button.ok { background:var(--ok); color:#071d0b; }
+    button.danger { background:var(--bad); }
     button:disabled { opacity:.45; cursor:not-allowed; }
-    .primary { background:var(--blue); color:white; }
-    .ok { background:var(--ok); color:#08210c; }
-    .warn { background:var(--target); color:#2a1a00; }
-    .danger { background:var(--danger); color:white; }
-    .ghost { background:#2a3144; color:var(--text); }
-    .stats { display:grid; grid-template-columns:1fr 1fr; gap:10px; margin-top:12px; }
-    .stat { background:#10141e; border-radius:10px; padding:10px; }
-    .stat b { display:block; font-size:17px; margin-top:4px; }
-    .motor-list { background:#10141e; border:1px solid var(--line); border-radius:8px; padding:6px; margin-bottom:10px; max-height:220px; overflow:auto; }
-    .motor-item { display:flex; align-items:center; gap:8px; padding:8px 10px; border-radius:8px; margin-bottom:4px; border:1px solid transparent; cursor:pointer; }
-    .motor-item.focused { border-color:var(--target); background:#241c0c; }
-    .motor-item.enabled { box-shadow:inset 3px 0 0 var(--ok); }
-    .motor-item .meta { flex:1; font-size:13px; }
-    .motor-item .ang { color:var(--current); font-size:13px; }
-    .section { margin-top:14px; padding:12px; background:#23293b; border:1px solid #3d4a66; border-radius:8px; }
-    .section-title { color:var(--target); font-weight:700; margin:0 0 8px; }
-    .log { min-height:100px; max-height:200px; overflow:auto; color:var(--muted); font:13px Consolas,"Courier New",monospace; white-space:pre-wrap; background:#10141e; border:1px solid var(--line); border-radius:8px; padding:8px 10px; margin-top:12px; }
-    .log .err { color:var(--danger); }
-    .log .ok { color:var(--ok); }
-    .dial-wrap { display:flex; flex-direction:column; align-items:center; }
-    svg { max-width:100%; touch-action:none; cursor:crosshair; }
-    svg.disabled { opacity:.35; cursor:not-allowed; }
-    .legend { display:flex; gap:16px; justify-content:center; margin-top:8px; font-size:13px; }
-    .dot { width:10px; height:10px; border-radius:50%; display:inline-block; margin-right:6px; }
-    .hint { color:var(--muted); font-size:13px; text-align:center; margin-top:8px; max-width:620px; }
-    .banner { width:100%; padding:10px 12px; border-radius:8px; margin-bottom:12px; background:#302a18; border:1px solid #665527; color:#f4d88a; font-size:13px; display:none; }
-    @media (max-width:900px) { main { grid-template-columns:1fr; } }
+    .row { display:flex; gap:8px; }
+    .row > * { flex:1; }
+    .muted { color:var(--muted); font-size:13px; }
+    .motor { border:1px solid var(--line); border-radius:8px; padding:8px; margin:6px 0; display:flex; gap:8px; align-items:center; }
+    .motor input { width:auto; }
+    .log { white-space:pre-wrap; min-height:180px; max-height:420px; overflow:auto; background:#0c1119; padding:12px; border-radius:8px; font:12px Consolas,monospace; }
+    .lock { margin-top:10px; padding:9px; border:1px solid #866e30; background:#332b17; border-radius:8px; display:none; }
+    @media(max-width:800px){ main{grid-template-columns:1fr;} }
   </style>
 </head>
 <body>
-<header>
-  <div>
-    <h1>OpenArm Motor GUI</h1>
-    <div class="sub">DaMiao DM-J6248P / LANDA PA043 · Windows serial CAN</div>
-  </div>
-  <div class="sub" id="connLabel">未連線</div>
-</header>
-
 <main>
   <section class="card">
-    <label>馬達型號</label>
-    <select id="motorModel">
-      <option value="damiao_6248p">DaMiao DM-J6248P</option>
-      <option value="lande_pa043">LANDA PA043</option>
-    </select>
+    <h1>OpenArm Universal CAN GUI</h1>
 
-    <label>轉接器</label>
-    <select id="adapter">
-      <option value="auto">自動偵測</option>
-      <option value="slcan">SLCAN</option>
-      <option value="usbcan_a">Waveshare USB-CAN-A</option>
-    </select>
+    <label>Motor Model</label>
+    <select id="motorModel"></select>
 
-    <label>COM 埠</label>
-    <select id="port"></select>
+    <label>CAN Adapter</label>
+    <select id="adapter"></select>
+
+    <label>Device / Channel</label>
+    <select id="channel"></select>
 
     <div class="row">
-      <button class="primary" id="btnConnect">連線並掃描</button>
-      <button class="ghost" id="btnScan">掃描 Node ID</button>
-      <button class="ghost" id="btnDisconnect">斷線</button>
+      <button class="primary" id="connect">Connect + Scan</button>
+      <button id="disconnect">Disconnect</button>
     </div>
 
-    <div class="section">
-      <div class="section-title">Control Mode</div>
-      <select id="controlMode"></select>
-      <button class="warn" id="btnApplyMode" style="width:100%">套用控制模式</button>
-      <div class="sub" id="modeHint">DaMiao 固定使用 MIT；PA043 可讀寫 Parameter 11。</div>
+    <button id="scan" style="margin-top:8px">Scan Motor IDs</button>
+
+    <div id="motionLock" class="lock">此型號目前鎖定運動控制；可先驗證連線、掃描與參數讀取。</div>
+
+    <h2>Detected Motors</h2>
+    <div id="motors" class="muted">尚未連線</div>
+
+    <h2>Control Mode</h2>
+    <select id="mode"></select>
+    <button id="applyMode">Apply Mode</button>
+
+    <div class="row" style="margin-top:8px">
+      <button class="ok" id="enable">Enable</button>
+      <button class="danger" id="disable">Disable</button>
     </div>
 
-    <label>bus 上的馬達（可複選）</label>
-    <div class="row" style="margin-bottom:8px">
-      <button class="ghost" id="btnSelectAll">全選</button>
-      <button class="ghost" id="btnSelectNone">全不選</button>
-    </div>
-    <div id="motorList" class="motor-list"><div class="sub" style="padding:8px">尚未掃描</div></div>
-
+    <h2>Generic Command</h2>
     <div class="row">
-      <button class="ok" id="btnEnable">Enable 選取</button>
-      <button class="danger" id="btnDisable">Disable 選取</button>
+      <div><label>Position (rad)</label><input id="position" type="number" step="0.01" value="0" /></div>
+      <div><label>Velocity (rad/s)</label><input id="velocity" type="number" step="0.01" value="0" /></div>
     </div>
-
-    <div class="section" id="motionLockBanner">
-      <div class="section-title">PA043 安全鎖</div>
-      <div class="sub">目前版本已支援 PA043 連線、掃描與 Control Mode 切換；運動 Enable / Position / Spin 暫時鎖定，待實機 feedback 驗證後再開放。</div>
-    </div>
-
-    <div class="section" id="spinPanel">
-      <div class="section-title">壓測：持續轉圈</div>
-      <label>方向</label>
-      <select id="spinDir">
-        <option value="1">順時針（角度增加）</option>
-        <option value="-1">逆時針（角度減少）</option>
-      </select>
-      <div class="row">
-        <button class="warn" id="btnSpinStart">開始轉圈</button>
-        <button class="ghost" id="btnSpinStop">停止轉圈</button>
-      </div>
-    </div>
-
-    <div class="section" id="flashPanel">
-      <div class="section-title">DaMiao ID 燒錄</div>
-      <label>Joint</label>
-      <select id="flashJoint">
-        <option value="">-- 自訂 --</option>
-        <option value="J1" data-sender="1" data-receiver="17">J1 (0x01 / 0x11)</option>
-        <option value="J2" data-sender="2" data-receiver="18">J2 (0x02 / 0x12)</option>
-        <option value="J3" data-sender="3" data-receiver="19">J3 (0x03 / 0x13)</option>
-        <option value="J4" data-sender="4" data-receiver="20">J4 (0x04 / 0x14)</option>
-        <option value="J5" data-sender="5" data-receiver="21">J5 (0x05 / 0x15)</option>
-        <option value="J6" data-sender="6" data-receiver="22">J6 (0x06 / 0x16)</option>
-        <option value="J7" data-sender="7" data-receiver="23">J7 (0x07 / 0x17)</option>
-        <option value="J8" data-sender="8" data-receiver="24">J8 (0x08 / 0x18)</option>
-      </select>
-      <div class="row">
-        <div><label>Sender CAN ID</label><input type="number" id="flashSender" value="1" /></div>
-        <div><label>Receiver/Master ID</label><input type="number" id="flashReceiver" value="17" /></div>
-      </div>
-      <button class="warn" id="btnFlash" style="width:100%">寫入 ID</button>
-    </div>
-
-    <div class="stats">
-      <div class="stat">目前角度<b id="curDeg">--</b></div>
-      <div class="stat">目前位置<b id="curRad">-- rad</b></div>
-      <div class="stat">目標角度<b id="tgtDeg">--</b></div>
-      <div class="stat">狀態<b id="status">--</b></div>
-      <div class="stat">速度<b id="vel">--</b></div>
-      <div class="stat">扭矩 / 溫度<b id="misc">--</b></div>
-    </div>
-
-    <label>最快速率（度/秒）</label>
-    <input id="speed" type="range" min="3" max="60" value="18" />
-    <div class="sub" id="speedLabel">18 °/s</div>
-
-    <label>Position / MIT Kp, Kd</label>
     <div class="row">
-      <input id="kp" type="number" step="0.5" value="4" />
-      <input id="kd" type="number" step="0.1" value="2.0" />
+      <div><label>Torque (Nm)</label><input id="torque" type="number" step="0.01" value="0" /></div>
+      <div><label>Kp</label><input id="kp" type="number" step="0.1" value="0" /></div>
+      <div><label>Kd</label><input id="kd" type="number" step="0.1" value="0" /></div>
     </div>
-
-    <div class="log" id="log">選馬達型號、轉接器與 COM 埠後按「連線並掃描」。</div>
+    <div class="row">
+      <div><label>Vel Kp</label><input id="velKp" type="number" step="0.1" value="0" /></div>
+      <div><label>Vel Kd</label><input id="velKd" type="number" step="0.1" value="0" /></div>
+      <div><label>Vel Ki</label><input id="velKi" type="number" step="0.001" value="0" /></div>
+    </div>
+    <button class="primary" id="send">Send One Command</button>
   </section>
 
-  <section class="card dial-wrap">
-    <div class="banner" id="dialBanner">PA043 運動控制目前鎖定；此階段先驗證連線、掃描與 Control Mode。</div>
-    <svg id="dial" viewBox="0 0 420 420" width="420" height="420">
-      <circle cx="210" cy="210" r="168" fill="#10141e" stroke="#2c3448" stroke-width="10" />
-      <circle cx="210" cy="210" r="18" fill="#3a4258" />
-      <g id="ticks"></g>
-      <polygon id="targetNeedle" points="210,48 201,92 219,92" fill="#f3b14e" />
-      <polygon id="currentNeedle" points="210,46 198,118 222,118" fill="#5ee0c8" />
-      <text x="210" y="228" text-anchor="middle" fill="#e8edf7" font-size="28" font-weight="700" id="centerDeg">--°</text>
-      <text x="210" y="252" text-anchor="middle" fill="#93a0b8" font-size="13" id="centerHint">點圓盤選角度</text>
-    </svg>
-    <div class="legend">
-      <span><i class="dot" style="background:#5ee0c8"></i>目前位置</span>
-      <span><i class="dot" style="background:#f3b14e"></i>目標</span>
-    </div>
-    <div class="hint">DaMiao：Enable 後可點圓盤控制位置。PA043：目前先驗證通訊與模式設定，運動功能暫鎖。</div>
+  <section class="card">
+    <h2 style="margin-top:0">State / Log</h2>
+    <div id="status" class="muted">未連線</div>
+    <div id="log" class="log"></div>
   </section>
 </main>
 
 <script>
 const $ = id => document.getElementById(id);
-const lines = [];
-let lastErrorSeq = 0;
-let lastMotorsKey = "";
-let currentState = null;
+let caps = null;
+let state = null;
 
-const ticks = $("ticks");
-for (let i = 0; i < 36; i++) {
-  const a = (i * 10 - 90) * Math.PI / 180;
-  const inner = i % 9 === 0 ? 128 : 148;
-  const x1 = 210 + Math.cos(a) * inner;
-  const y1 = 210 + Math.sin(a) * inner;
-  const x2 = 210 + Math.cos(a) * 168;
-  const y2 = 210 + Math.sin(a) * 168;
-  const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-  line.setAttribute("x1", x1); line.setAttribute("y1", y1);
-  line.setAttribute("x2", x2); line.setAttribute("y2", y2);
-  line.setAttribute("stroke", i % 9 === 0 ? "#c9d4ea" : "#3a4258");
-  line.setAttribute("stroke-width", i % 9 === 0 ? 3 : 1.5);
-  ticks.appendChild(line);
-}
-["0°","90°","180°","270°"].forEach((label, i) => {
-  const a = (i * 90 - 90) * Math.PI / 180;
-  const text = document.createElementNS("http://www.w3.org/2000/svg", "text");
-  text.setAttribute("x", 210 + Math.cos(a) * 188);
-  text.setAttribute("y", 210 + Math.sin(a) * 188 + 4);
-  text.setAttribute("text-anchor", "middle");
-  text.setAttribute("fill", "#93a0b8");
-  text.setAttribute("font-size", "13");
-  text.textContent = label;
-  ticks.appendChild(text);
-});
-
-function log(msg, kind="") {
+function log(msg) {
   const t = new Date().toLocaleTimeString();
-  lines.push({t, msg:String(msg), kind});
-  if (lines.length > 50) lines.shift();
-  $("log").innerHTML = lines.map(x => `<div class="${x.kind}">[${x.t}] ${x.msg}</div>`).join("");
+  $("log").textContent += `[${t}] ${msg}\n`;
   $("log").scrollTop = $("log").scrollHeight;
 }
 
 async function api(path, opts={}) {
-  let res;
-  try { res = await fetch(path, opts); }
-  catch (e) { throw new Error("後端沒有回應：" + e.message); }
-  let data;
-  try { data = await res.json(); }
-  catch (_) { throw new Error(`HTTP ${res.status} 回傳不是 JSON`); }
-  if (!data.success) throw new Error(data.error || "request failed");
+  const r = await fetch(path, opts);
+  const data = await r.json();
+  if (!r.ok || data.success === false) throw new Error(data.error || `HTTP ${r.status}`);
   return data;
 }
 
-function hexId(v) { return "0x" + Number(v).toString(16).toUpperCase().padStart(2,"0"); }
-function rotateNeedle(id, deg) { $(id).setAttribute("transform", `rotate(${deg} 210 210)`); }
-function currentSelected() {
-  return Array.from(document.querySelectorAll("#motorList input[type=checkbox]:checked")).map(x => Number(x.value));
+function selectedIds() {
+  return [...document.querySelectorAll('#motors input[type=checkbox]:checked')].map(x => Number(x.value));
 }
 
-function populateModeOptions(model, selected) {
-  const el = $("controlMode");
-  const opts = model === "lande_pa043"
-    ? [
-        ["servo","Servo (0x01)"],
-        ["torque_position","Torque-Position Mixed (0x02)"],
-        ["velocity","Velocity (0x03)"],
-        ["torque","Torque (0x04)"],
-      ]
-    : [["mit","MIT"]];
-  el.innerHTML = opts.map(([v,t]) => `<option value="${v}">${t}</option>`).join("");
-  if (opts.some(([v]) => v === selected)) el.value = selected;
-}
-
-function updateModelUi(s=null) {
-  const model = s?.motor_model || $("motorModel").value;
-  const connected = !!s?.connected;
-  const lande = model === "lande_pa043";
-
-  $("motorModel").disabled = connected;
-  $("motionLockBanner").style.display = lande ? "block" : "none";
-  $("dialBanner").style.display = lande ? "block" : "none";
-  $("dial").classList.toggle("disabled", lande);
-  $("spinPanel").style.display = lande ? "none" : "block";
-  $("flashPanel").style.display = lande ? "none" : "block";
-  $("btnEnable").disabled = lande;
-  $("btnApplyMode").disabled = !connected || !lande;
-  $("controlMode").disabled = !connected || !lande;
-  $("modeHint").textContent = lande
-    ? "切換 PA043 模式會先送 Reset State，再寫 Parameter 11、儲存並讀回驗證。"
-    : "DaMiao 使用 MIT 模式。";
-
-  populateModeOptions(model, s?.control_mode || (lande ? "servo" : "mit"));
-}
-
-function renderMotorList(s) {
-  const motors = s.motors || [];
-  const key = motors.map(m => `${m.id}:${m.control_mode_key || ""}:${m.mst_id || ""}`).join(",");
-  const list = $("motorList");
-
-  if (key !== lastMotorsKey) {
-    lastMotorsKey = key;
-    if (!motors.length) {
-      list.innerHTML = `<div class="sub" style="padding:8px">沒有掃到馬達</div>`;
-      return;
-    }
-    list.innerHTML = motors.map(m => {
-      const checked = m.selected ? "checked" : "";
-      const cls = `${m.focused ? "focused" : ""} ${m.enabled ? "enabled" : ""}`;
-      const angle = m.pos_deg_mod == null ? "--" : m.pos_deg_mod.toFixed(1) + "°";
-      let extra = "";
-      if (s.motor_model === "lande_pa043") {
-        extra = ` · FW ${m.firmware ?? "?"} · ${m.control_mode_name || "Unknown"}`;
-      } else if (m.mst_id != null) {
-        extra = ` · MST ${hexId(m.mst_id)}`;
-      }
-      return `<label class="motor-item ${cls}" data-id="${m.id}">
-        <input type="checkbox" value="${m.id}" ${checked}/>
-        <span class="meta">${hexId(m.id)}${extra} · ${m.status || ""}</span>
-        <span class="ang">${angle}</span>
-      </label>`;
-    }).join("");
-
-    list.querySelectorAll("input[type=checkbox]").forEach(box => {
-      box.onchange = () => pushSelection(currentSelected(), s.motor_id).catch(e => log(e.message,"err"));
-    });
-    list.querySelectorAll(".motor-item").forEach(row => {
-      row.onclick = ev => {
-        if (ev.target.tagName === "INPUT") return;
-        const id = Number(row.dataset.id);
-        const ids = currentSelected();
-        if (!ids.includes(id)) ids.push(id);
-        pushSelection(ids, id).catch(e => log(e.message,"err"));
-      };
-    });
+function populateChannels() {
+  const adapter = $("adapter").value;
+  let devices = caps.devices || [];
+  if (adapter === "slcan" || adapter === "usbcan_a") {
+    devices = devices.filter(d => d.transport === "serial");
+  } else if (adapter !== "auto") {
+    devices = devices.filter(d => d.adapter === adapter);
   }
-}
-
-async function pushSelection(ids, focus) {
-  const body = {ids};
-  if (focus != null) body.focus = focus;
-  const data = await api("/api/select", {
-    method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify(body)
-  });
-  applyState(data.state);
-}
-
-function ingestErrors(s) {
-  for (const item of (s.errors || [])) {
-    if (item.seq > lastErrorSeq) {
-      lastErrorSeq = item.seq;
-      log(item.msg,"err");
-    }
-  }
+  $("channel").innerHTML = devices.length
+    ? devices.map(d => `<option value="${d.channel}">${d.label}</option>`).join('')
+    : `<option value="">(auto/default)</option>`;
 }
 
 function applyState(s) {
-  currentState = s;
-  if (s.connected) $("motorModel").value = s.motor_model;
-  updateModelUi(s);
+  state = s;
+  const connected = !!s.connected;
+  $("status").textContent = connected
+    ? `${s.motor_model_name} · ${s.adapter}:${s.channel} · ${s.bitrate} bit/s`
+    : '未連線';
 
-  const nSel = (s.selected_ids || []).length;
-  const nEn = (s.enabled_ids || []).length;
-  $("connLabel").textContent = s.connected
-    ? `${s.motor_model_name || s.motor_model} · ${s.channel} (${s.adapter || "slcan"}) · 選 ${nSel} · Enable ${nEn}`
-    : "未連線";
+  const modes = s.supported_modes || [];
+  const current = $("mode").value;
+  $("mode").innerHTML = modes.map(m => `<option value="${m}">${m}</option>`).join('');
+  if (modes.includes(current)) $("mode").value = current;
 
-  $("status").textContent = s.status || "--";
-  $("curDeg").textContent = s.pos_deg_mod == null ? "--" : s.pos_deg_mod.toFixed(1) + "°";
-  $("curRad").textContent = s.pos_rad == null ? "-- rad" : s.pos_rad.toFixed(4) + " rad";
-  $("tgtDeg").textContent = s.target_deg_mod == null ? "--" : s.target_deg_mod.toFixed(1) + "°";
-  $("vel").textContent = s.vel == null ? "--" : (s.vel * 180 / Math.PI).toFixed(1) + " °/s";
-  const tq = s.torq == null ? "--" : Number(s.torq).toFixed(2) + " Nm";
-  const temp = s.t_mos == null ? "--" : s.t_mos + "°C";
-  $("misc").textContent = `${tq} / ${temp}`;
-  $("centerDeg").textContent = s.pos_deg_mod == null ? "--°" : s.pos_deg_mod.toFixed(1) + "°";
-  $("centerHint").textContent = s.motor_model === "lande_pa043"
-    ? "PA043 運動控制暫鎖"
-    : (nEn ? "點圓盤設定目標角度" : "先 Enable，再點圓盤");
+  const motors = s.motors || [];
+  $("motors").innerHTML = motors.length
+    ? motors.map(m => {
+        const checked = m.selected ? 'checked' : '';
+        const extra = m.firmware != null ? ` FW=${m.firmware}` : '';
+        const mode = m.control_mode_name || m.control_mode_key || '';
+        return `<label class="motor"><input type="checkbox" value="${m.id}" ${checked}/><span>ID ${m.id} (0x${Number(m.id).toString(16).toUpperCase()})${extra} ${mode}</span></label>`;
+      }).join('')
+    : '<span class="muted">沒有掃到馬達</span>';
 
-  if (s.pos_deg_mod != null) rotateNeedle("currentNeedle", s.pos_deg_mod);
-  if (s.target_deg_mod != null) rotateNeedle("targetNeedle", s.target_deg_mod);
-  renderMotorList(s);
-  ingestErrors(s);
+  $("motionLock").style.display = connected && !s.motion_allowed ? 'block' : 'none';
+  $("enable").disabled = !connected || !s.motion_allowed;
+  $("send").disabled = !connected || !s.motion_allowed;
+  $("disable").disabled = !connected;
+  $("applyMode").disabled = !connected || !modes.length;
 }
 
-async function refreshPorts() {
-  const data = await api("/api/ports");
-  const ports = data.ports || [];
-  $("port").innerHTML = ports.map(p => `<option value="${p.device}">${p.label}</option>`).join("") || `<option value="">(沒有 COM)</option>`;
+async function refreshCaps() {
+  const data = await api('/api/capabilities');
+  caps = data;
+  $("motorModel").innerHTML = (caps.motors || []).map(m => `<option value="${m.key}">${m.name}</option>`).join('');
+  $("adapter").innerHTML = `<option value="auto">Auto</option>` +
+    (caps.adapters || []).filter(a => a.supported).map(a => `<option value="${a.key}">${a.label}</option>`).join('');
+  populateChannels();
 }
 
-async function poll() {
+$("adapter").onchange = populateChannels;
+
+$("connect").onclick = async () => {
   try {
-    const data = await api("/api/state");
+    const data = await api('/api/connect', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({
+        motor_model:$("motorModel").value,
+        adapter:$("adapter").value,
+        channel:$("channel").value || null,
+      })
+    });
     applyState(data.state);
-  } catch (_) {}
-}
+    log('Connected and scanned.');
+  } catch(e) { log(`ERROR: ${e.message}`); }
+};
 
-async function setTargetDeg(deg) {
-  if ($("motorModel").value === "lande_pa043") return;
-  const data = await api("/api/target", {
-    method:"POST", headers:{"Content-Type":"application/json"},
-    body:JSON.stringify({deg, ids:currentSelected()})
+$("disconnect").onclick = async () => {
+  try { await api('/api/disconnect', {method:'POST'}); applyState({connected:false,motors:[],supported_modes:[]}); log('Disconnected.'); }
+  catch(e){ log(`ERROR: ${e.message}`); }
+};
+
+$("scan").onclick = async () => {
+  try { const data = await api('/api/scan', {method:'POST'}); applyState(data.state); log('Scan complete.'); }
+  catch(e){ log(`ERROR: ${e.message}`); }
+};
+
+async function pushSelection() {
+  if (!state?.connected) return;
+  const ids = selectedIds();
+  const data = await api('/api/select', {
+    method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids})
   });
   applyState(data.state);
-  if (data.warning) log(data.warning);
 }
 
-$("motorModel").onchange = () => updateModelUi(null);
+$("motors").onchange = () => pushSelection().catch(e => log(`ERROR: ${e.message}`));
 
-$("btnConnect").onclick = async () => {
+$("applyMode").onclick = async () => {
   try {
-    log("連線中...");
-    const data = await api("/api/connect", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
-        channel:$("port").value,
-        adapter:$("adapter").value,
-        motor_model:$("motorModel").value
-      })
+    await pushSelection();
+    const data = await api('/api/control_mode', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ids:selectedIds(), mode:$("mode").value})
     });
-    applyState(data.state);
-    log(`已連線：${data.state.motor_model_name}，掃到 ${(data.state.motors || []).length} 顆。`,"ok");
-  } catch (e) { log(e.message,"err"); }
+    applyState(data.state); log(`Mode -> ${$("mode").value}`);
+  } catch(e){ log(`ERROR: ${e.message}`); }
 };
 
-$("btnDisconnect").onclick = async () => {
+$("enable").onclick = async () => {
   try {
-    await api("/api/disconnect", {method:"POST"});
-    currentState = null;
-    $("connLabel").textContent = "未連線";
-    $("motorModel").disabled = false;
-    $("motorList").innerHTML = `<div class="sub" style="padding:8px">尚未掃描</div>`;
-    lastMotorsKey = "";
-    updateModelUi(null);
-    log("已斷線。","ok");
-  } catch (e) { log(e.message,"err"); }
+    await pushSelection();
+    const data = await api('/api/enable', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids:selectedIds()})});
+    applyState(data.state); log('Enable sent.');
+  } catch(e){ log(`ERROR: ${e.message}`); }
 };
 
-$("btnScan").onclick = async () => {
+$("disable").onclick = async () => {
   try {
-    const data = await api("/api/scan", {method:"POST"});
-    applyState(data.state); log(data.message,"ok");
-  } catch (e) { log(e.message,"err"); }
+    await pushSelection();
+    const data = await api('/api/disable', {method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({ids:selectedIds()})});
+    applyState(data.state); log('Disable sent.');
+  } catch(e){ log(`ERROR: ${e.message}`); }
 };
 
-$("btnApplyMode").onclick = async () => {
+$("send").onclick = async () => {
   try {
-    const data = await api("/api/control_mode", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({mode:$("controlMode").value, ids:currentSelected()})
+    await pushSelection();
+    const command = {
+      position:Number($("position").value), velocity:Number($("velocity").value),
+      torque:Number($("torque").value), kp:Number($("kp").value), kd:Number($("kd").value),
+      pos_kp:Number($("kp").value), pos_kd:Number($("kd").value),
+      vel_kp:Number($("velKp").value), vel_kd:Number($("velKd").value), vel_ki:Number($("velKi").value)
+    };
+    const data = await api('/api/command', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({ids:selectedIds(), mode:$("mode").value, command})
     });
-    applyState(data.state); log(data.message,"ok");
-  } catch (e) { log(e.message,"err"); }
+    applyState(data.state); log('Command sent.');
+  } catch(e){ log(`ERROR: ${e.message}`); }
 };
 
-$("btnEnable").onclick = async () => {
-  try {
-    const data = await api("/api/enable", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({ids:currentSelected()})
-    });
-    applyState(data.state); log("Enable 完成。","ok");
-  } catch (e) { log(e.message,"err"); }
-};
-
-$("btnDisable").onclick = async () => {
-  try {
-    const data = await api("/api/disable", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({ids:currentSelected()})
-    });
-    applyState(data.state); log("Disable / Reset 完成。","ok");
-  } catch (e) { log(e.message,"err"); }
-};
-
-$("btnSpinStart").onclick = async () => {
-  try {
-    const data = await api("/api/spin", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({enable:true, dir:Number($("spinDir").value)})
-    });
-    applyState(data.state); log(data.message || "開始轉圈","ok");
-  } catch (e) { log(e.message,"err"); }
-};
-
-$("btnSpinStop").onclick = async () => {
-  try {
-    const data = await api("/api/spin", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({enable:false})
-    });
-    applyState(data.state); log(data.message || "停止轉圈","ok");
-  } catch (e) { log(e.message,"err"); }
-};
-
-$("btnSelectAll").onclick = () => {
-  const ids = (currentState?.motors || []).map(m => Number(m.id));
-  pushSelection(ids, currentState?.motor_id).catch(e => log(e.message,"err"));
-};
-$("btnSelectNone").onclick = () => pushSelection([], null).catch(e => log(e.message,"err"));
-
-$("flashJoint").onchange = () => {
-  const opt = $("flashJoint").selectedOptions[0];
-  if (opt?.dataset.sender) $("flashSender").value = opt.dataset.sender;
-  if (opt?.dataset.receiver) $("flashReceiver").value = opt.dataset.receiver;
-};
-
-$("btnFlash").onclick = async () => {
-  try {
-    const data = await api("/api/flash_id", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
-        joint_name:$("flashJoint").value,
-        sender_can_id:Number($("flashSender").value),
-        receiver_master_id:Number($("flashReceiver").value)
-      })
-    });
-    applyState(data.state); log(data.message,"ok");
-  } catch (e) { log(e.message,"err"); }
-};
-
-async function pushSettings() {
-  try {
-    const data = await api("/api/settings", {
-      method:"POST", headers:{"Content-Type":"application/json"},
-      body:JSON.stringify({
-        kp:Number($("kp").value),
-        kd:Number($("kd").value),
-        max_deg_s:Number($("speed").value)
-      })
-    });
-    applyState(data.state);
-  } catch (e) { log(e.message,"err"); }
-}
-$("speed").oninput = () => { $("speedLabel").textContent = $("speed").value + " °/s"; };
-$("speed").onchange = pushSettings;
-$("kp").onchange = pushSettings;
-$("kd").onchange = pushSettings;
-
-$("dial").addEventListener("pointerdown", ev => {
-  if ($("motorModel").value === "lande_pa043") return;
-  const rect = $("dial").getBoundingClientRect();
-  const x = (ev.clientX - rect.left) / rect.width * 420;
-  const y = (ev.clientY - rect.top) / rect.height * 420;
-  const dx = x - 210, dy = y - 210;
-  if (Math.hypot(dx,dy) < 40) return;
-  let deg = Math.atan2(dx,-dy) * 180 / Math.PI;
-  if (deg < 0) deg += 360;
-  rotateNeedle("targetNeedle",deg);
-  setTargetDeg(deg).catch(e => log(e.message,"err"));
-});
+setInterval(async () => {
+  try { const data = await api('/api/state'); if (data.state.connected) applyState(data.state); }
+  catch(_) {}
+}, 500);
 
 (async () => {
-  updateModelUi(null);
-  try { await refreshPorts(); } catch (e) { log(e.message,"err"); }
-  setInterval(poll, 250);
+  await refreshCaps();
+  applyState({connected:false,motors:[],supported_modes:[]});
 })();
 </script>
 </body>
