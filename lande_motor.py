@@ -17,6 +17,19 @@ PARAM_FIRMWARE_VERSION = 10
 PARAM_CONTROL_MODE = 11
 PARAM_MOTOR_ID = 36
 
+# The supplied PA043 manual specifies Classic CAN 2.0A standard frames
+# (11-bit identifiers) at 1 Mbps. CAN FD is not part of the documented
+# PA043 protocol.
+CAN_STANDARD_ID_MAX = 0x7FF
+
+# Manual page 20 states Motor ID range 0..1024, while page 17 states that
+# parameter traffic uses Motor-ID + 0x600. Those statements conflict for
+# IDs above 0x1FF on an 11-bit CAN 2.0A bus. Until the vendor documents
+# the high-ID parameter addressing rule, parameter discovery is limited to
+# the range that is representable without guessing.
+DOCUMENTED_MOTOR_ID_MAX = 1024
+PARAMETER_ADDRESSABLE_MOTOR_ID_MAX = CAN_STANDARD_ID_MAX - PARAM_CAN_BASE
+
 
 # ============================================================
 # PA043 control modes
@@ -106,7 +119,7 @@ class LandeMotor:
         self.bus = bus
         self.motor_id = int(motor_id)
 
-        if not 0 <= self.motor_id <= 0x7FF:
+        if not 0 <= self.motor_id <= CAN_STANDARD_ID_MAX:
             raise ValueError(
                 f"Invalid standard CAN Motor ID: "
                 f"{self.motor_id}"
@@ -139,11 +152,14 @@ class LandeMotor:
     def parameter_can_id(self) -> int:
         can_id = PARAM_CAN_BASE + self.motor_id
 
-        if can_id > 0x7FF:
+        if can_id > CAN_STANDARD_ID_MAX:
             raise ValueError(
                 f"Motor ID {self.motor_id} gives parameter "
-                f"CAN ID 0x{can_id:X}, outside CAN2.0A "
-                f"11-bit range"
+                f"CAN ID 0x{can_id:X}, outside documented "
+                f"CAN2.0A 11-bit range. The vendor manual "
+                f"states Motor ID 0..{DOCUMENTED_MOTOR_ID_MAX} "
+                f"but does not document parameter addressing "
+                f"above 0x{PARAMETER_ADDRESSABLE_MOTOR_ID_MAX:X}."
             )
 
         return can_id
@@ -197,11 +213,26 @@ class LandeMotor:
             if msg is None:
                 continue
 
+            # Section 4.1 of the supplied manual defines parameter traffic
+            # on Motor-ID + 0x600 using CAN2.0A standard frames. Filter on
+            # the CAN identifier first so unrelated bus traffic cannot be
+            # mistaken for a parameter response.
+            if msg.is_extended_id:
+                continue
+
+            if msg.arbitration_id != self.parameter_can_id:
+                continue
+
             data = bytes(msg.data)
 
             if len(data) != 8:
                 continue
 
+            # The response payload gives Motor-ID in one byte, while
+            # the same manual also claims Motor IDs may be larger than 255.
+            # The encoding of the upper Motor-ID bits is not documented.
+            # Keep the historical low-byte check, but the arbitration ID
+            # above is the authoritative discriminator for this driver.
             if data[0] != (
                 self.motor_id & 0xFF
             ):
@@ -362,19 +393,31 @@ class LandeMotor:
     # Common parameters
     # ========================================================
 
-    def get_firmware_version(self) -> int:
+    def get_firmware_version(
+        self,
+        timeout: float = 0.30,
+    ) -> int:
         return self.read_int32(
-            PARAM_FIRMWARE_VERSION
+            PARAM_FIRMWARE_VERSION,
+            timeout,
         )
 
-    def get_control_mode(self) -> int:
+    def get_control_mode(
+        self,
+        timeout: float = 0.30,
+    ) -> int:
         return self.read_int32(
-            PARAM_CONTROL_MODE
+            PARAM_CONTROL_MODE,
+            timeout,
         )
 
-    def get_motor_id(self) -> int:
+    def get_motor_id(
+        self,
+        timeout: float = 0.30,
+    ) -> int:
         return self.read_int32(
-            PARAM_MOTOR_ID
+            PARAM_MOTOR_ID,
+            timeout,
         )
 
     def set_control_mode(
@@ -394,6 +437,8 @@ class LandeMotor:
         )
 
     def save_parameters(self) -> None:
+        # Manual section 4.3.1 marks bytes 2..6 as undefined. The driver
+        # deliberately sends zero for every undefined byte.
         self._send_parameter_frame(
             [
                 0x67,
@@ -407,11 +452,60 @@ class LandeMotor:
             ]
         )
 
+    def restore_defaults(
+        self,
+        *,
+        confirm: bool = False,
+    ) -> None:
+        if not confirm:
+            raise ValueError(
+                "restore_defaults requires confirm=True"
+            )
+
+        self._send_parameter_frame(
+            [
+                0x67,
+                0x02,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x76,
+            ]
+        )
+
+    def start_electric_angle_calibration(
+        self,
+        *,
+        confirm: bool = False,
+    ) -> None:
+        if not confirm:
+            raise ValueError(
+                "electric-angle calibration requires confirm=True"
+            )
+
+        self._send_parameter_frame(
+            [
+                0x67,
+                0x03,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x00,
+                0x76,
+            ]
+        )
+
     # ========================================================
     # Motor state
     # ========================================================
 
-    def enable(self) -> None:
+    def enable(
+        self,
+        feedback_timeout: float = 0.03,
+    ) -> Optional[dict]:
         self._send(
             [
                 0xFF,
@@ -426,8 +520,14 @@ class LandeMotor:
         )
 
         self._state["status"] = "Motor State"
+        if feedback_timeout <= 0:
+            return None
+        return self._recv_feedback(feedback_timeout)
 
-    def disable(self) -> None:
+    def disable(
+        self,
+        feedback_timeout: float = 0.03,
+    ) -> Optional[dict]:
         self._send(
             [
                 0xFF,
@@ -442,8 +542,14 @@ class LandeMotor:
         )
 
         self._state["status"] = "Reset State"
+        if feedback_timeout <= 0:
+            return None
+        return self._recv_feedback(feedback_timeout)
 
-    def set_zero(self) -> None:
+    def set_zero(
+        self,
+        feedback_timeout: float = 0.03,
+    ) -> Optional[dict]:
         self._send(
             [
                 0xFF,
@@ -456,6 +562,10 @@ class LandeMotor:
                 0xFE,
             ]
         )
+
+        if feedback_timeout <= 0:
+            return None
+        return self._recv_feedback(feedback_timeout)
 
     # ========================================================
     # Feedback
@@ -553,6 +663,12 @@ class LandeMotor:
                 "vel": velocity,
                 "torq": torque,
 
+                # Do not assign temperature/fault yet. The supplied
+                # manual is internally inconsistent: the page-12 table
+                # labels Byte6=Fault-ID, Byte7=Temp, while the page-13 prose
+                # says Byte6=temperature, Byte7=fault. Preserve both raw
+                # bytes until the vendor clarifies the encoding or bench
+                # data conclusively identifies them.
                 "raw_byte6": data[6],
                 "raw_byte7": data[7],
             }

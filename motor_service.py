@@ -129,13 +129,13 @@ class MotorService:
         with self._lock:
             return self._require_backend().get_motor(int(motor_id))
 
-    def enable(self, motor_id: int) -> None:
+    def enable(self, motor_id: int):
         with self._lock:
-            self._require_backend().enable(int(motor_id))
+            return self._require_backend().enable(int(motor_id))
 
-    def disable(self, motor_id: int) -> None:
+    def disable(self, motor_id: int):
         with self._lock:
-            self._require_backend().disable(int(motor_id))
+            return self._require_backend().disable(int(motor_id))
 
     def get_state(self, motor_id: int) -> dict[str, Any]:
         with self._lock:

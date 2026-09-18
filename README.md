@@ -194,3 +194,13 @@ Branch:
 ```text
 feature/lande-pa043
 ```
+
+## PA043 protocol audit and diagnostics
+
+PA043 uses **Classic CAN 2.0A standard frames at 1 Mbps**. The supplied vendor
+manual does not define CAN FD for this actuator.
+
+- `knowledge/PA043_CAN_PROTOCOL_AUDIT.md` records verified mappings,
+  contradictions, and undocumented behavior.
+- `lande_probe.py` performs parsed, read-only parameter discovery.
+- `lande_diag.py` performs raw parser-independent diagnostics.

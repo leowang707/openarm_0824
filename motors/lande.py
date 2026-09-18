@@ -7,6 +7,7 @@ from typing import Any
 from lande_motor import (
     LandeMotor,
     MODE_NAMES,
+    PARAMETER_ADDRESSABLE_MOTOR_ID_MAX,
     MODE_SERVO,
     MODE_TORQUE,
     MODE_TORQUE_POSITION,
@@ -58,16 +59,33 @@ class LandeBackend(MotorBackend):
             self.motors[motor_id] = motor
         return motor
 
-    def scan(self, start_id: int = 0x00, end_id: int = 0x10) -> list[dict[str, Any]]:
+    def scan(
+        self,
+        start_id: int = 0x00,
+        end_id: int = 0x10,
+    ) -> list[dict[str, Any]]:
         found: list[dict[str, Any]] = []
         found_ids: set[int] = set()
 
+        start_id = int(start_id)
+        end_id = int(end_id)
+
+        if start_id < 0 or end_id < start_id:
+            raise ValueError("Invalid PA043 scan range")
+
+        if end_id > PARAMETER_ADDRESSABLE_MOTOR_ID_MAX:
+            raise ValueError(
+                "PA043 parameter discovery above Motor ID "
+                f"0x{PARAMETER_ADDRESSABLE_MOTOR_ID_MAX:X} is undocumented: "
+                "the manual says CAN2.0A and parameter CAN ID=0x600+Motor-ID."
+            )
+
         with self._txn_lock:
-            for motor_id in range(int(start_id), int(end_id) + 1):
+            for motor_id in range(start_id, end_id + 1):
                 motor = self._ensure_motor(motor_id)
 
                 try:
-                    firmware = motor.get_firmware_version()
+                    firmware = motor.get_firmware_version(timeout=0.05)
                 except TimeoutError:
                     continue
 
@@ -106,13 +124,13 @@ class LandeBackend(MotorBackend):
 
         return found
 
-    def enable(self, motor_id: int) -> None:
+    def enable(self, motor_id: int):
         with self._txn_lock:
-            self.get_motor(motor_id).enable()
+            return self.get_motor(motor_id).enable()
 
-    def disable(self, motor_id: int) -> None:
+    def disable(self, motor_id: int):
         with self._txn_lock:
-            self.get_motor(motor_id).disable()
+            return self.get_motor(motor_id).disable()
 
     def get_control_mode(self, motor_id: int) -> str | None:
         with self._txn_lock:
@@ -209,6 +227,10 @@ register_motor(
         backend=LandeBackend,
         default_bitrate=1_000_000,
         default_scan_start=0x00,
+        # Keep the GUI/service default scan fast. Full parameter
+        # discovery up to 0x1FF is available through lande_probe.py and
+        # lande_diag.py; IDs above 0x1FF have no documented parameter
+        # addressing rule under CAN2.0A + (0x600 + Motor-ID).
         default_scan_end=0x10,
         supported_modes=LandeBackend.supported_modes,
         # Keep PA043 motion locked by default until real feedback has been

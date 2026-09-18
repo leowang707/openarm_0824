@@ -3,6 +3,10 @@ from __future__ import annotations
 import argparse
 
 from can_adapters import adapter_keys, list_adapter_devices
+from lande_motor import (
+    DOCUMENTED_MOTOR_ID_MAX,
+    PARAMETER_ADDRESSABLE_MOTOR_ID_MAX,
+)
 from motor_service import MotorService
 
 
@@ -31,8 +35,12 @@ def main() -> None:
     parser.add_argument(
         "--scan-end",
         type=_int_auto,
-        default=0x10,
-        help="Scan 0..scan-end when --id is omitted",
+        default=PARAMETER_ADDRESSABLE_MOTOR_ID_MAX,
+        help=(
+            "Scan 0..scan-end when --id is omitted. "
+            "Parameter discovery is limited to 0x1FF by the "
+            "documented CAN2.0A + 0x600 addressing rule."
+        ),
     )
     args = parser.parse_args()
 
@@ -63,6 +71,13 @@ def main() -> None:
     print(f"Channel     : {info['channel']}")
     print(f"CAN bitrate : {info['bitrate']}")
     print("Test mode   : READ-ONLY")
+    print(
+        "Protocol note: the manual states Motor ID 0.."
+        f"{DOCUMENTED_MOTOR_ID_MAX}, but parameter frames use "
+        "Motor-ID+0x600 on CAN2.0A. IDs above "
+        f"0x{PARAMETER_ADDRESSABLE_MOTOR_ID_MAX:X} therefore have "
+        "no documented parameter-addressing rule."
+    )
     print()
 
     try:
