@@ -15,7 +15,7 @@ from lande_motor import (
 )
 
 from .base import MotorBackend
-from .registry import MotorSpec, register_motor
+from .registry import BusProfile, MotorSpec, register_motor
 
 
 MODE_KEYS = {
@@ -25,6 +25,14 @@ MODE_KEYS = {
     "torque": MODE_TORQUE,
 }
 MODE_KEYS_REVERSE = {value: key for key, value in MODE_KEYS.items()}
+
+PA043_CLASSIC_1M = BusProfile(
+    key="classic_1m",
+    label="Classic CAN 2.0A 1 Mbps",
+    fd=False,
+    nominal_bitrate=1_000_000,
+    notes="PA043 manual specifies Classic CAN2.0A standard frames at 1 Mbps.",
+)
 
 
 class LandeBackend(MotorBackend):
@@ -225,7 +233,8 @@ register_motor(
         key=LandeBackend.model_key,
         name=LandeBackend.model_name,
         backend=LandeBackend,
-        default_bitrate=1_000_000,
+        bus_profiles=(PA043_CLASSIC_1M,),
+        default_bus_profile="classic_1m",
         default_scan_start=0x00,
         # Keep the GUI/service default scan fast. Full parameter
         # discovery up to 0x1FF is available through lande_probe.py and

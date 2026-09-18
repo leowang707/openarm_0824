@@ -435,6 +435,7 @@ def connect():
     adapter = str(data.get("adapter") or "auto")
     channel = data.get("channel")
     motor_model = str(data.get("motor_model") or "").strip()
+    bus_profile = str(data.get("bus_profile") or "").strip() or None
 
     if not motor_model:
         return _json_error("motor_model is required")
@@ -446,6 +447,7 @@ def connect():
                 adapter=adapter,
                 channel=channel,
                 motor_model=motor_model,
+                bus_profile=bus_profile,
             )
             _motors = []
             _tracks = {}

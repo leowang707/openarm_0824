@@ -5,11 +5,16 @@ from typing import Any
 
 import can
 
-from .base import AdapterDevice
+from .base import AdapterCapabilities, AdapterDevice
 from .registry import register_adapter
 
 
 class SocketCANAdapter:
+    capabilities = AdapterCapabilities(
+        classic_can=True,
+        can_fd=False,
+        notes='Current SocketCAN path has no CAN-FD profile plumbing yet.',
+    )
     key = "socketcan"
     label = "Linux SocketCAN"
     transport = "network"

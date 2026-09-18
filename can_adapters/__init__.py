@@ -1,6 +1,6 @@
 """Cross-platform CAN adapter registry."""
 
-from .base import AdapterDevice
+from .base import AdapterCapabilities, AdapterDevice
 from .registry import (
     ThreadSafeBus,
     adapter_keys,
@@ -21,6 +21,7 @@ from . import gs_usb as _gs_usb  # noqa: F401,E402
 from . import socketcan as _socketcan  # noqa: F401,E402
 
 __all__ = [
+    "AdapterCapabilities",
     "AdapterDevice",
     "ThreadSafeBus",
     "adapter_keys",

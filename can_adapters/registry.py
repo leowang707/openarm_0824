@@ -38,6 +38,7 @@ def list_adapter_types() -> list[dict[str, Any]]:
             "label": adapter.label,
             "transport": adapter.transport,
             "supported": bool(adapter.supported()),
+            "capabilities": adapter.capabilities.to_dict(),
         }
         for adapter in _ADAPTERS.values()
     ]

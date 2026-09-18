@@ -55,6 +55,27 @@ feature/lande-pa043
 
 PA043 motion control is still under hardware validation.
 
+## Bus profiles and adapter capabilities
+
+Motor model and CAN transport are represented separately.
+
+```text
+LANDA PA043
+  classic_1m          implemented
+
+DaMiao DM-J6248P
+  classic_1m          implemented
+
+DaMiao DM-J8009P-2EC
+  classic_1m          implemented
+  canfd_1m_5m         observed on FW 6417 / Sub 004, not implemented
+```
+
+Current adapter backends (`slcan`, `usbcan_a`, `gs_usb`, and `socketcan`) are
+explicitly declared Classic-CAN-only until a CAN-FD backend is implemented and
+validated. The service rejects unimplemented/incompatible profiles before the
+motor-control path is opened.
+
 ## Setup
 
 ```powershell

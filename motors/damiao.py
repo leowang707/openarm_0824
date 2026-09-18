@@ -5,7 +5,7 @@ import time
 from typing import Any
 
 from .base import MotorBackend
-from .registry import MotorSpec, register_motor
+from .registry import BusProfile, MotorSpec, register_motor
 
 
 MODE_TO_DRIVER = {
@@ -27,6 +27,27 @@ REGISTER_TO_MODE = {
 # such as 0x01 vs 0x11 cannot be silently misidentified.
 SCAN_ID_MIN = 0x01
 SCAN_ID_MAX = 0x0F
+
+CLASSIC_1M = BusProfile(
+    key="classic_1m",
+    label="Classic CAN 1 Mbps",
+    fd=False,
+    nominal_bitrate=1_000_000,
+    notes="Documented DaMiao Classic-CAN profile.",
+)
+
+J8009_CANFD_1M_5M_OBSERVED = BusProfile(
+    key="canfd_1m_5m",
+    label="CAN-FD 1M / 5M (FW6417 observed)",
+    fd=True,
+    nominal_bitrate=1_000_000,
+    data_bitrate=5_000_000,
+    implemented=False,
+    notes=(
+        "FW 6417 / Sub 004 reported CAN Baud 5.00 Mbps over UART. "
+        "Recorded for planning only; CAN-FD protocol/backend is not implemented."
+    ),
+)
 
 
 class _DaMiaoBackend(MotorBackend):
@@ -288,7 +309,8 @@ for spec in (
         key=DaMiao6248PBackend.model_key,
         name=DaMiao6248PBackend.model_name,
         backend=DaMiao6248PBackend,
-        default_bitrate=1_000_000,
+        bus_profiles=(CLASSIC_1M,),
+        default_bus_profile="classic_1m",
         default_scan_start=SCAN_ID_MIN,
         default_scan_end=SCAN_ID_MAX,
         supported_modes=DaMiao6248PBackend.supported_modes,
@@ -298,7 +320,11 @@ for spec in (
         key=DaMiao8009PBackend.model_key,
         name=DaMiao8009PBackend.model_name,
         backend=DaMiao8009PBackend,
-        default_bitrate=1_000_000,
+        bus_profiles=(
+            CLASSIC_1M,
+            J8009_CANFD_1M_5M_OBSERVED,
+        ),
+        default_bus_profile="classic_1m",
         default_scan_start=SCAN_ID_MIN,
         default_scan_end=SCAN_ID_MAX,
         supported_modes=DaMiao8009PBackend.supported_modes,

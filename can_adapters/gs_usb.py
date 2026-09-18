@@ -5,11 +5,16 @@ from typing import Any
 
 import can
 
-from .base import AdapterDevice
+from .base import AdapterCapabilities, AdapterDevice
 from .registry import register_adapter
 
 
 class GsUsbAdapter:
+    capabilities = AdapterCapabilities(
+        classic_can=True,
+        can_fd=False,
+        notes='Current gs_usb path is treated as Classic CAN only.',
+    )
     key = "gs_usb"
     label = "gs_usb / CANable / candleLight"
     transport = "usb"

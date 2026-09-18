@@ -6,7 +6,7 @@ from typing import Any
 import can
 from serial.tools import list_ports
 
-from .base import AdapterDevice
+from .base import AdapterCapabilities, AdapterDevice
 from .registry import register_adapter
 
 BABEL_VID, BABEL_PID = 0x1D50, 0x60C7
@@ -14,6 +14,11 @@ SLCAN_TTY_BAUD = 115_200
 
 
 class SlcanAdapter:
+    capabilities = AdapterCapabilities(
+        classic_can=True,
+        can_fd=False,
+        notes='SLCAN / Lawicel backend is Classic CAN only.',
+    )
     key = "slcan"
     label = "SLCAN / Lawicel"
     transport = "serial"

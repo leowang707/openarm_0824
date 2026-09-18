@@ -7,6 +7,7 @@ import can_adapters  # noqa: F401 - ensure built-in adapters are registered
 import motors  # noqa: F401 - ensure built-in motor models are registered
 
 from can_adapters import (
+    get_adapter,
     list_adapter_devices,
     list_adapter_types,
     open_can_bus,
@@ -25,7 +26,10 @@ class MotorService:
         self.adapter: str | None = None
         self.channel: Any = None
         self.motor_model: str | None = None
+        self.bus_profile: str | None = None
         self.bitrate: int | None = None
+        self.data_bitrate: int | None = None
+        self.fd: bool = False
 
     @staticmethod
     def capabilities() -> dict[str, Any]:
@@ -45,19 +49,45 @@ class MotorService:
         adapter: str,
         channel: Any,
         motor_model: str,
+        bus_profile: str | None = None,
         bitrate: int | None = None,
     ) -> dict[str, Any]:
         with self._lock:
             self.disconnect()
 
             motor_spec = get_motor_spec(motor_model)
-            use_bitrate = int(bitrate or motor_spec.default_bitrate)
+            profile = motor_spec.get_bus_profile(bus_profile)
+
+            if not profile.implemented:
+                raise RuntimeError(
+                    f"{motor_spec.name} bus profile {profile.key!r} is recorded "
+                    "but not implemented by this repository yet"
+                )
+
+            if bitrate is not None and int(bitrate) != profile.nominal_bitrate:
+                raise ValueError(
+                    f"Explicit bitrate {int(bitrate)} conflicts with profile "
+                    f"{profile.key!r} nominal bitrate {profile.nominal_bitrate}"
+                )
+
             kind, resolved_channel = resolve_adapter(adapter, channel)
+            adapter_backend = get_adapter(kind)
+
+            if profile.fd and not adapter_backend.capabilities.can_fd:
+                raise RuntimeError(
+                    f"Bus profile {profile.key!r} requires CAN-FD, but adapter "
+                    f"{kind!r} is Classic-CAN only in the current repo backend"
+                )
+            if not profile.fd and not adapter_backend.capabilities.classic_can:
+                raise RuntimeError(
+                    f"Bus profile {profile.key!r} requires Classic CAN, but "
+                    f"adapter {kind!r} does not expose Classic CAN"
+                )
 
             bus = open_can_bus(
                 adapter=kind,
                 channel=resolved_channel,
-                bitrate=use_bitrate,
+                bitrate=profile.nominal_bitrate,
             )
 
             try:
@@ -71,7 +101,10 @@ class MotorService:
             self.adapter = kind
             self.channel = resolved_channel
             self.motor_model = motor_spec.key
-            self.bitrate = use_bitrate
+            self.bus_profile = profile.key
+            self.bitrate = profile.nominal_bitrate
+            self.data_bitrate = profile.data_bitrate
+            self.fd = profile.fd
 
             return self.connection_info()
 
@@ -85,7 +118,10 @@ class MotorService:
             self.adapter = None
             self.channel = None
             self.motor_model = None
+            self.bus_profile = None
             self.bitrate = None
+            self.data_bitrate = None
+            self.fd = False
 
             if backend is not None:
                 try:
@@ -110,7 +146,10 @@ class MotorService:
             "adapter": self.adapter,
             "channel": self.channel,
             "motor_model": self.motor_model,
+            "bus_profile": self.bus_profile,
             "bitrate": self.bitrate,
+            "data_bitrate": self.data_bitrate,
+            "fd": self.fd,
         }
 
     def scan(

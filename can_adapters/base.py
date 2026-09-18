@@ -5,6 +5,22 @@ from typing import Any, Protocol
 
 
 @dataclass(frozen=True)
+class AdapterCapabilities:
+    """Transport capabilities exposed by an adapter backend."""
+
+    classic_can: bool = True
+    can_fd: bool = False
+    notes: str = ""
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "classic_can": self.classic_can,
+            "can_fd": self.can_fd,
+            "notes": self.notes,
+        }
+
+
+@dataclass(frozen=True)
 class AdapterDevice:
     adapter: str
     channel: Any
@@ -27,6 +43,7 @@ class CANAdapter(Protocol):
     label: str
     transport: str
     default_channel: Any
+    capabilities: AdapterCapabilities
 
     def supported(self) -> bool:
         ...

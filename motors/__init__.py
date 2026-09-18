@@ -2,6 +2,7 @@
 
 from .base import MotorBackend
 from .registry import (
+    BusProfile,
     MotorSpec,
     get_motor_spec,
     list_motor_models,
@@ -15,6 +16,7 @@ from . import damiao as _damiao  # noqa: F401,E402
 
 __all__ = [
     "MotorBackend",
+    "BusProfile",
     "MotorSpec",
     "get_motor_spec",
     "list_motor_models",

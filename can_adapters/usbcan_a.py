@@ -6,13 +6,18 @@ from typing import Any
 import can
 from serial.tools import list_ports
 
-from .base import AdapterDevice
+from .base import AdapterCapabilities, AdapterDevice
 from .registry import register_adapter
 
 CH340_VID, CH340_PID = 0x1A86, 0x7523
 
 
 class UsbCanAAdapter:
+    capabilities = AdapterCapabilities(
+        classic_can=True,
+        can_fd=False,
+        notes='Waveshare USB-CAN-A backend is Classic CAN only.',
+    )
     key = "usbcan_a"
     label = "Waveshare USB-CAN-A"
     transport = "serial"
