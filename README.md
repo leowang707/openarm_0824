@@ -25,12 +25,20 @@ feature/lande-pa043
 
 ### DaMiao DM-J8009P-2EC
 
-- Standard CAN, fixed 1 Mbps per supplied V1.0 manual
+- Classic CAN profile: Standard CAN, 1 Mbps per supplied V1.0 manual
 - Motor scan (automatic discovery IDs 1..15 with current dependency)
 - Enable / Disable
 - MIT / POS_VEL / VEL
 - Position dial for MIT / POS_VEL
 - Uses the DaMiao SDK `8009` mapping preset
+- Tested hardware observation (FW 6417 / Sub 004 via UART):
+  - CAN ID `0x001`
+  - MASTER ID `0x011`
+  - reported CAN baud `5.00 Mbps`
+  - current mode `MIT`
+  - firmware menu exposes MIT / position-speed / speed / Hybrid
+- The current repo backend remains **Classic CAN only**. The observed 5 Mbps
+  firmware configuration is not yet implemented as a CAN-FD transport/profile.
 
 ### LANDA PA043
 

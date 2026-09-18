@@ -112,13 +112,58 @@ Updated implementation exposes MIT / POS_VEL / VEL / FORCE_POS.
 repo key   = damiao_8009p
 display    = DaMiao DM-J8009P-2EC
 SDK preset = 8009
-bitrate    = 1 Mbps
+classic profile bitrate = 1 Mbps
 modes      = MIT / POS_VEL / VEL
 ```
 
 The 12.5 / 45 / 54 MIT limits come from the DaMiao official SDK. The supplied
 8-page J8009P V1.0 manual says P_MAX/V_MAX/T_MAX are configurable but does not
 state these default numeric values, so the repo treats them as SDK-derived.
+
+## Hardware observation: DM-J8009P-2EC FW 6417 / Sub 004
+
+A tested DM-J8009P-2EC reported the following directly over its
+921600-baud debug UART during boot:
+
+```text
+Firmware Version: 6417
+Sub Version: 004
+
+CAN ID:     0x001
+MASTER ID:  0x011
+CAN Baud:   5.00Mbps
+
+Control Mode:
+1: MIT Mode
+2: position-speed cascade Mode
+3: speed Mode
+4: Hybrid control Mode
+```
+
+The UART path was verified bidirectionally:
+
+```text
+Motor -> PC boot/debug output : PASS
+PC -> Motor `m` command       : PASS
+PC -> Motor ESC 0x1B          : PASS
+```
+
+The Waveshare USB-CAN-A path was independently verified in internal loopback
+mode. With the motor at the observed FW 6417 / Sub 004 configuration, the
+Classic CAN 1 Mbps path produced no reply when querying the known motor CAN ID
+`0x001`.
+
+These are hardware observations for FW 6417 / Sub 004. They do not invalidate
+the supplied J8009P V1.0 manual, which documents a Classic CAN 1 Mbps profile.
+
+Repository policy:
+
+- retain the documented Classic CAN 1 Mbps J8009P implementation
+- do not assume the 1 Mbps and reported 5 Mbps configurations auto-switch
+- do not silently treat firmware `Hybrid` as identical to Classic `FORCE_POS`
+- do not send this observed 5 Mbps configuration through the current Classic
+  CAN backend
+- add CAN-FD transport/profile support separately after protocol verification
 
 ## Automatic scan limitation
 
