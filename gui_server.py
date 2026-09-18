@@ -20,7 +20,7 @@ DEFAULT_SPEED_DEG_S = 18.0
 DEFAULT_KP = 4.0
 DEFAULT_KD = 2.0
 POSITION_LIMIT_RAD = 12.0
-POSITION_MODES = {"mit", "servo", "torque_position"}
+POSITION_MODES = {"mit", "pos_vel", "servo", "torque_position"}
 
 _template_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "templates")
 app = Flask(__name__, template_folder=_template_dir)
@@ -286,6 +286,11 @@ def _position_command_kwargs(mode: str, position: float, velocity: float) -> dic
             "torque": 0.0,
             "kp": _kp,
             "kd": _kd,
+        }
+    if mode == "pos_vel":
+        return {
+            "position": position,
+            "velocity_limit": abs(velocity),
         }
     if mode == "servo":
         return {

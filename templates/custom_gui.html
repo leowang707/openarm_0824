@@ -144,7 +144,10 @@
           <div><label>Vel Kp</label><input id="velKp" type="number" step="0.1" value="0" /></div>
           <div><label>Vel Kd</label><input id="velKd" type="number" step="0.1" value="0" /></div>
         </div>
-        <div><label>Vel Ki</label><input id="velKi" type="number" step="0.001" value="0" /></div>
+        <div class="row">
+          <div><label>Vel Ki</label><input id="velKi" type="number" step="0.001" value="0" /></div>
+          <div><label>Torque Limit Ratio (DaMiao FORCE_POS)</label><input id="torqueLimitRatio" type="number" min="0" max="1" step="0.01" value="0.2" /></div>
+        </div>
         <button class="primary" id="send">Send One Command</button>
       </div>
     </details>
@@ -223,7 +226,7 @@ function rot(el, deg) {
   el.setAttribute('transform', `rotate(${Number(deg)} 220 220)`);
 }
 function isPositionMode(mode) {
-  return ['mit','servo','torque_position'].includes(mode);
+  return ['mit','pos_vel','servo','torque_position'].includes(mode);
 }
 
 const ticks = $("ticks");
@@ -307,7 +310,7 @@ function applyState(s) {
   $("dialBanner").style.display = connected && !dialAllowed ? 'block' : 'none';
   $("dialBanner").textContent = !s.motion_allowed
     ? '運動安全鎖尚未解除。'
-    : (!isPositionMode(s.control_mode) ? '目前模式不是位置控制模式；輪盤只支援 MIT / Servo / Torque-Position。' : '');
+    : (!isPositionMode(s.control_mode) ? '目前模式不是位置控制模式；輪盤支援 MIT / POS_VEL / Servo / Torque-Position。' : '');
 
   $("enable").disabled = !connected || !s.motion_allowed;
   $("disable").disabled = !connected;
@@ -341,7 +344,7 @@ function applyState(s) {
   $("misc").textContent = `${torq} / ${temp}`;
 
   $("modeHint").textContent = isPositionMode($("mode").value)
-    ? '輪盤可用：MIT / Servo / Torque-Position。'
+    ? '輪盤可用：MIT / POS_VEL / Servo / Torque-Position。'
     : '此模式可用進階單次命令；輪盤停用。';
 
   for (const e of (s.errors || [])) {
@@ -536,7 +539,9 @@ $("send").onclick = async () => {
       pos_kd:Number($("kd").value),
       vel_kp:Number($("velKp").value),
       vel_kd:Number($("velKd").value),
-      vel_ki:Number($("velKi").value)
+      vel_ki:Number($("velKi").value),
+      velocity_limit:Math.abs(Number($("velocity").value)),
+      torque_limit_ratio:Number($("torqueLimitRatio").value)
     };
     const data = await api('/api/command', {
       method:'POST', headers:{'Content-Type':'application/json'},

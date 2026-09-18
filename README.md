@@ -3,6 +3,7 @@
 Motor control GUI for:
 
 - DaMiao DM-J6248P
+- DaMiao DM-J8009P-2EC
 - LANDA PA043
 
 Current development branch:
@@ -15,13 +16,21 @@ feature/lande-pa043
 
 ### DaMiao DM-J6248P
 
-- Motor scan
+- Classic CAN, default 1 Mbps
+- Motor scan (automatic discovery IDs 1..15 with current dependency)
 - Enable / Disable
-- MIT position control
-- Position dial
-- Speed / Kp / Kd settings
+- MIT / POS_VEL / VEL / FORCE_POS
+- Position dial for MIT / POS_VEL
 - Multi-motor control
-- Motor ID configuration
+
+### DaMiao DM-J8009P-2EC
+
+- Standard CAN, fixed 1 Mbps per supplied V1.0 manual
+- Motor scan (automatic discovery IDs 1..15 with current dependency)
+- Enable / Disable
+- MIT / POS_VEL / VEL
+- Position dial for MIT / POS_VEL
+- Uses the DaMiao SDK `8009` mapping preset
 
 ### LANDA PA043
 
@@ -97,6 +106,12 @@ In the GUI choose:
 
 ```text
 DaMiao DM-J6248P
+```
+
+or:
+
+```text
+DaMiao DM-J8009P-2EC
 ```
 
 or:
@@ -204,3 +219,9 @@ manual does not define CAN FD for this actuator.
   contradictions, and undocumented behavior.
 - `lande_probe.py` performs parsed, read-only parameter discovery.
 - `lande_diag.py` performs raw parser-independent diagnostics.
+
+## DaMiao protocol audit
+
+- `knowledge/DAMIAO_PROTOCOL_AUDIT.md` compares DM-J6248P and DM-J8009P-2EC against the supplied J8009P manual, DaMiao official SDK, and the `damiao-motor` dependency.
+- DM-J6248P exposes MIT / POS_VEL / VEL / FORCE_POS.
+- DM-J8009P-2EC exposes the three modes explicitly documented in its V1.0 manual: MIT / POS_VEL / VEL.
