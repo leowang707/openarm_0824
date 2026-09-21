@@ -135,7 +135,9 @@ Device / Channel
 ```
 
 The operator must explicitly choose the backend first. Only then is the
-Device / Channel list populated with devices that match the selected backend.
+Device / Channel list populated. Serial backends allow manual selection from
+the available COM/tty devices; non-serial backends show matching discovered
+interfaces.
 
 This avoids treating a serial COM port as proof of a particular CAN protocol.
 
