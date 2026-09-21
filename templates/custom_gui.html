@@ -310,15 +310,24 @@ function populateChannels() {
   }
 
   let devices = caps?.devices || [];
+
   if (adapter === "slcan" || adapter === "usbcan_a") {
+    // Backend is explicitly selected by the user, so any serial COM/tty
+    // may be selected. This is not protocol auto-detection.
     devices = devices.filter(d => d.transport === "serial");
-  } else if (adapter !== "auto") {
+  } else {
     devices = devices.filter(d => d.adapter === adapter);
   }
+
   $("channel").innerHTML = devices.length
-    ? devices.map(d => `<option value="${esc(d.channel)}">${esc(d.label)}</option>`).join('')
-    : `<option value="">(auto/default)</option>`;
-  if (devices.some(d => String(d.channel) === old)) $("channel").value = old;
+    ? devices
+        .map(d => `<option value="${esc(d.channel)}">${esc(d.label)}</option>`)
+        .join('')
+    : `<option value="" disabled>\u6c92\u6709\u5075\u6e2c\u5230\u76f8\u7b26\u88dd\u7f6e</option>`;
+
+  if (devices.some(d => String(d.channel) === old)) {
+    $("channel").value = old;
+  }
 }
 
 function renderMotors(motors) {

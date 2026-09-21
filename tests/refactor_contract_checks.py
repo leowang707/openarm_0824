@@ -344,6 +344,16 @@ class LayoutContractTests(unittest.TestCase):
         for term in ('id="motorBrand"','id="busProfile"','bus_profile:$("busProfile").value', 'id="dial"'):
             self.assertIn(term,html)
 
+    def test_gui_requires_explicit_adapter_selection(self):
+        html = (ROOT/"templates/custom_gui.html").read_text(encoding="utf-8")
+        self.assertNotIn('value="auto">Auto', html)
+        self.assertIn('devices.filter(d => d.transport === "serial")', html)
+        self.assertIn('devices.filter(d => d.adapter === adapter)', html)
+        self.assertNotIn("(auto/default)", html)
+        server = (ROOT/"gui_server.py").read_text(encoding="utf-8")
+        self.assertIn("if not adapter:", server)
+        self.assertIn("adapter is required", server)
+
     def test_flask_route_names_preserved(self):
         tree=ast.parse((ROOT/"gui_server.py").read_text(encoding="utf-8"))
         routes={d.args[0].value for f in tree.body if isinstance(f,ast.FunctionDef)

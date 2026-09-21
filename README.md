@@ -1,4 +1,4 @@
-﻿# openarm_0824
+# openarm_0824
 
 Cross-platform motor-control GUI and CAN abstraction for:
 
@@ -128,14 +128,14 @@ Initial state:
 
 ```text
 CAN Backend / Host Interface
-  隢??CAN Backend
+  請選擇 CAN Backend
 
 Device / Channel
-  隢??豢? CAN Backend
+  請先選擇 CAN Backend
 ```
 
 The operator must explicitly choose the backend first. Only then is the
-Device / Channel list populated.
+Device / Channel list populated with devices that match the selected backend.
 
 This avoids treating a serial COM port as proof of a particular CAN protocol.
 
@@ -182,13 +182,13 @@ http://127.0.0.1:5000
 3. Select **Bus Profile**.
 4. Select **CAN Backend / Host Interface**.
 5. Select **Device / Channel**.
-6. Press **???銝行??收??*.
+6. Press **連線並掃描馬達**.
 
 The GUI does not guess the CAN backend.
 
 ### Connection buttons
 
-**??菜葫 CAN 鋆蔭**
+**重新偵測 CAN 裝置**
 
 Re-enumerates host-side CAN/USB/serial devices and refreshes the Device /
 Channel list.
@@ -196,17 +196,17 @@ Channel list.
 It does not open the CAN bus, scan motor IDs, enable a motor, or send motion
 commands.
 
-**???銝行??收??*
+**連線並掃描馬達**
 
 Validates the selected motor/profile/backend, opens the CAN adapter, creates
 the motor backend, and scans the configured motor-ID range.
 
-**???擐祇?**
+**重新掃描馬達**
 
 Reuses the currently open CAN bus and scans for motors again. It does not reopen
 the host adapter.
 
-**?瑞?**
+**斷線**
 
 Stops the motor backend, shuts down the CAN bus, releases the host device, and
 clears the active motor list.
@@ -217,12 +217,13 @@ The connect button distinguishes host-CAN connection from actual motor
 discovery.
 
 ```text
-???銝行??收??  no CAN connection
+連線並掃描馬達
+  no CAN connection
 
-CAN 撌脤??
+CAN 已連線
   host adapter/bus is open, but no motor has been discovered
 
-撌脤??
+已連線
   host adapter/bus is open and at least one motor has been discovered
 ```
 
