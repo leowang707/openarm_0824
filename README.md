@@ -1,6 +1,6 @@
-# openarm_0824
+﻿# openarm_0824
 
-Motor control GUI for:
+Cross-platform motor-control GUI and CAN abstraction for:
 
 - DaMiao DM-J6248P
 - DaMiao DM-J8009P-2EC
@@ -9,7 +9,7 @@ Motor control GUI for:
 Current development branch:
 
 ```text
-feature/lande-pa043
+refactor/vendor-layout-20260921
 ```
 
 ## Features
@@ -17,31 +17,36 @@ feature/lande-pa043
 ### DaMiao DM-J6248P
 
 - Classic CAN, default 1 Mbps
-- Motor scan (automatic discovery IDs 1..15 with current dependency)
+- Automatic motor discovery for logical IDs 1..15 with the current dependency
 - Enable / Disable
 - MIT / POS_VEL / VEL / FORCE_POS
 - Position dial for MIT / POS_VEL
 - Multi-motor control
+- GUI-adjustable motion speed, MIT Kp and Kd
 
 ### DaMiao DM-J8009P-2EC
 
 - Classic CAN profile: Standard CAN, 1 Mbps per supplied V1.0 manual
-- Motor scan (automatic discovery IDs 1..15 with current dependency)
+- Automatic motor discovery for logical IDs 1..15 with the current dependency
 - Enable / Disable
 - MIT / POS_VEL / VEL
 - Position dial for MIT / POS_VEL
 - Uses the DaMiao SDK `8009` mapping preset
-- One tested **J8009-series** unit (exact P/non-P variant unconfirmed) reported
-  FW `6417 / 004`, CAN ID `0x001`, MASTER ID `0x011`, and `CAN Baud: 5.00Mbps`.
-- The `canfd_1m_5m` entry is an **unverified candidate**, not an implemented path
-  or proof of that unit's nominal/data timing. See `knowledge/HARDWARE_OBSERVATIONS.md`.
+- One tested J8009-series unit, with exact P/non-P variant still unconfirmed,
+  reported FW `6417 / 004`, CAN ID `0x001`, MASTER ID `0x011`, and
+  `CAN Baud: 5.00Mbps`
+- `canfd_1m_5m` remains an unverified candidate and is not an implemented
+  runtime path
+
+See `knowledge/HARDWARE_OBSERVATIONS.md` for hardware observations and
+unverified candidates.
 
 ### LANDA PA043
 
-- CAN 2.0A, 1 Mbps
-- Motor ID scan
+- Classic CAN 2.0A, 1 Mbps
+- Motor ID discovery
 - Firmware read
-- Control mode read
+- Control-mode read
 - Parameter read / write
 - Servo mode
 - Torque-Position mode
@@ -49,11 +54,40 @@ feature/lande-pa043
 - Torque mode
 - GUI motor-model selection
 
-PA043 motion control is still under hardware validation.
+PA043 motion control remains hardware-validation gated.
 
-## Bus profiles and adapter capabilities
+## Architecture
 
-Motor brand/model, bus profile, host backend and actual device/channel are separate concepts.
+Motor identity, motor protocol, CAN bus profile, host backend, and physical
+device/channel are separate concepts.
+
+```text
+Motor Brand
+    |
+Motor Model
+    |
+Motor Protocol
+    |
+Bus Profile
+    |
+CAN Backend / Host Interface
+    |
+Device / Channel
+    |
+Physical CAN Bus
+```
+
+Example:
+
+```text
+DaMiao DM-J6248P
+  protocol: damiao_classic
+  profile:  classic_1m
+  backend:  usbcan_a / slcan / gs_usb / socketcan
+  channel:  COMx / device index / can0
+```
+
+## Bus Profiles
 
 ```text
 LANDA PA043
@@ -67,10 +101,58 @@ DaMiao DM-J8009P-2EC
   canfd_1m_5m         unverified candidate, not implemented
 ```
 
-Current adapter backends (`slcan`, `usbcan_a`, `gs_usb`, and `socketcan`) are
-explicitly declared Classic-CAN-only until a CAN-FD backend is implemented and
-validated. The service rejects unimplemented/incompatible profiles before the
-motor-control path is opened.
+A bus profile defines transport requirements such as Classic CAN vs CAN-FD and
+nominal/data bitrate. It does not identify the USB adapter.
+
+`1 Mbps` is CAN bus bitrate. It is not the host command-loop frequency.
+
+## CAN Backends
+
+Current host backends:
+
+```text
+slcan       SLCAN / Lawicel serial protocol
+usbcan_a    Waveshare USB-CAN-A serial protocol
+gs_usb      gs_usb / CANable / candleLight direct USB
+socketcan   Linux SocketCAN interface
+```
+
+All currently exposed runtime backends are treated as Classic-CAN-only until
+a CAN-FD backend is implemented and hardware validated.
+
+### Explicit backend selection
+
+The GUI intentionally does not expose automatic backend selection.
+
+Initial state:
+
+```text
+CAN Backend / Host Interface
+  隢??CAN Backend
+
+Device / Channel
+  隢??豢? CAN Backend
+```
+
+The operator must explicitly choose the backend first. Only then is the
+Device / Channel list populated.
+
+This avoids treating a serial COM port as proof of a particular CAN protocol.
+
+CH340 devices are especially ambiguous: the same USB-serial family can be used
+by a USB-CAN adapter or by an ordinary UART device. Therefore a CH340 port is
+not automatically classified as Waveshare USB-CAN-A.
+
+For a verified Waveshare USB-CAN-A setup, explicitly select:
+
+```text
+CAN Backend: Waveshare USB-CAN-A
+Channel:     COMx
+```
+
+The lower-level adapter registry still retains internal auto-resolution logic
+for internal APIs, tests, and future discovery work, but the GUI does not
+use it as an operator-facing default.
 
 ## Setup
 
@@ -81,39 +163,7 @@ Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
 pip install -r requirements.txt
 ```
 
-## How to Use
-
-### 1. Connect Hardware
-
-Connect the USB-CAN adapter to the PC.
-
-For PA043:
-
-```text
-CAN-H -> CAN-H
-CAN-L -> CAN-L
-Power -> 24V
-```
-
-CAN bitrate:
-
-```text
-1 Mbps
-```
-
-### 2. Check COM Port
-
-```powershell
-python -m serial.tools.list_ports -v
-```
-
-Example:
-
-```text
-COM5
-```
-
-### 3. Run GUI
+## Run the GUI
 
 ```powershell
 python start_gui.py
@@ -125,105 +175,207 @@ Open:
 http://127.0.0.1:5000
 ```
 
-### 4. Select Motor Type
+## GUI Connection Workflow
 
-In the GUI choose:
+1. Select **Motor Brand**.
+2. Select **Motor Model**.
+3. Select **Bus Profile**.
+4. Select **CAN Backend / Host Interface**.
+5. Select **Device / Channel**.
+6. Press **???銝行??收??*.
+
+The GUI does not guess the CAN backend.
+
+### Connection buttons
+
+**??菜葫 CAN 鋆蔭**
+
+Re-enumerates host-side CAN/USB/serial devices and refreshes the Device /
+Channel list.
+
+It does not open the CAN bus, scan motor IDs, enable a motor, or send motion
+commands.
+
+**???銝行??收??*
+
+Validates the selected motor/profile/backend, opens the CAN adapter, creates
+the motor backend, and scans the configured motor-ID range.
+
+**???擐祇?**
+
+Reuses the currently open CAN bus and scans for motors again. It does not reopen
+the host adapter.
+
+**?瑞?**
+
+Stops the motor backend, shuts down the CAN bus, releases the host device, and
+clears the active motor list.
+
+## Connection-State Display
+
+The connect button distinguishes host-CAN connection from actual motor
+discovery.
 
 ```text
-DaMiao DM-J6248P
+???銝行??收??  no CAN connection
+
+CAN 撌脤??
+  host adapter/bus is open, but no motor has been discovered
+
+撌脤??
+  host adapter/bus is open and at least one motor has been discovered
 ```
 
-or:
+The connected-state button is disabled to prevent accidentally reopening the
+same CAN session.
+
+Opening an adapter is not itself proof that a motor is online.
+
+## DaMiao Control
+
+Typical workflow:
 
 ```text
-DaMiao DM-J8009P-2EC
+Select Brand / Model
+-> Select Bus Profile
+-> Select CAN Backend
+-> Select Device / Channel
+-> Connect and Scan
+-> Select Motor
+-> Select Control Mode
+-> Enable
+-> Set Target
+-> Disable
 ```
 
-or:
+### MIT mode
+
+MIT mode sends:
 
 ```text
-LANDA PA043
+target position
+target velocity
+Kp / stiffness
+Kd / damping
+feed-forward torque
 ```
 
-Then select the CAN adapter and COM port.
+The GUI exposes motion speed, Kp, and Kd for tuning.
 
-### 5. Connect and Scan
+Position error under load can depend on stiffness, damping, friction, gravity,
+and external load. Increase gains conservatively and stop testing if the motor
+begins to oscillate or behave unexpectedly.
 
-Press:
+### POS_VEL mode
+
+POS_VEL sends:
 
 ```text
-Connect / Scan
+target position
+velocity limit
 ```
 
-The GUI will scan available motor IDs.
+The velocity field is a motion limit, not MIT-style target velocity.
 
-For PA043 it will read:
+## PA043 Read-Only Test
 
-```text
-Motor ID
-Firmware Version
-Control Mode
-```
-
-### 6. PA043 Read-only Test
-
-Before motion testing, use:
+Before PA043 motion testing:
 
 ```powershell
 python lande_probe.py --port COM5
 ```
 
-This only reads motor parameters and does not enable motor motion.
+This reads motor parameters without enabling motor motion.
 
-### 7. DaMiao Control
-
-```text
-Connect
--> Scan
--> Select Motor
--> Enable
--> Set Target Position
--> Disable
-```
-
-### 8. PA043 Control
-
-PA043 supports:
-
-```text
-Servo
-Torque-Position
-Velocity
-Torque
-```
-
-Current GUI motion control is still under hardware validation.
+PA043 GUI motion remains locked by default until real feedback and safe hold
+behavior are validated.
 
 ## Main Files
 
 ```text
-gui_server.py                     existing HTTP API and control loop
-templates/custom_gui.html         brand/model/profile/backend selection + dial
-motor_service.py                 one session / one selected model / one bus
-can_profiles.py                  neutral BusProfile metadata
-motors/damiao/                   shared Classic backend + model presets
-motors/lande/                    PA043 backend + protocol
-can_adapters/                    separate host backends; not motor vendors
-lande_motor.py                   compatibility import shim
-lande_probe.py / lande_diag.py    existing command-line entry points
-tools/verify_refactor.py          offline test runner
+gui_server.py                     HTTP API + GUI control loop
+templates/custom_gui.html         browser UI
+motor_service.py                  active motor/backend/CAN session
+can_profiles.py                   neutral bus-profile metadata
+
+motors/damiao/
+  classic.py                      shared DaMiao Classic-CAN backend
+  models.py                       model identity and SDK mappings
+  profiles.py                     bus profiles
+  common.py                       mode mappings and scan bounds
+
+motors/lande/
+  pa043.py                        PA043 application backend
+  protocol.py                     PA043 wire protocol
+
+can_adapters/
+  registry.py                     adapter discovery/open abstraction
+  slcan.py                        SLCAN backend
+  usbcan_a.py                     Waveshare USB-CAN-A backend
+  gs_usb.py                       gs_usb backend
+  socketcan.py                    SocketCAN backend
+
+lande_motor.py                    legacy compatibility import shim
+lande_probe.py / lande_diag.py    PA043 diagnostics
+tools/verify_refactor.py          offline validation runner
 ```
+
+## Validation
+
+Run with the active project interpreter:
+
+```powershell
+python tools\verify_refactor.py
+git --no-pager diff --check
+```
+
+The verifier covers:
+
+- Python syntax
+- isolated architecture/contract tests
+- dependency integration checks
+- profile and adapter safety contracts
+- legacy import compatibility
+
+Passing offline validation does not prove:
+
+- USB driver correctness on every host
+- physical CAN wiring
+- motor identity
+- CAN-FD operation
+- safe motion under load
+
+Physical motor testing remains a separate validation step.
 
 ## Current Status
 
 ```text
-DaMiao GUI            ✓
-PA043 driver          ✓
-PA043 parameter read  ✓
-PA043 GUI backend     ✓
-PA043 GUI scan        Testing
-PA043 motion          Pending hardware validation
+Vendor/package refactor           implemented
+DaMiao J6248P Classic-CAN GUI     bench tested
+DaMiao J6248P MIT motion          bench tuning in progress
+DaMiao J8009P Classic-CAN path    implemented; hardware validation incomplete
+DaMiao CAN-FD candidate           not implemented
+PA043 protocol/backend            implemented
+PA043 parameter access            implemented
+PA043 motion                      pending hardware validation
+Explicit GUI backend selection    implemented
+GUI Auto backend selection        intentionally disabled
 ```
+
+## Diagnostics
+
+No-hardware catalog:
+
+```powershell
+python -m diagnostics.catalog
+```
+
+## Documentation
+
+- `knowledge/ARCHITECTURE.md` - runtime architecture and ownership boundaries
+- `knowledge/REFACTOR_RUNBOOK.md` - migration and validation workflow
+- `knowledge/HARDWARE_OBSERVATIONS.md` - observed hardware facts vs candidates
+- `knowledge/DAMIAO_PROTOCOL_AUDIT.md` - DaMiao protocol/model audit
 
 ## Git
 
@@ -233,57 +385,18 @@ Fork:
 https://github.com/leowang707/openarm_0824
 ```
 
-Branch:
+Current branch:
 
 ```text
-feature/lande-pa043
+refactor/vendor-layout-20260921
 ```
 
-## PA043 protocol audit and diagnostics
+## Safety Notes
 
-PA043 uses **Classic CAN 2.0A standard frames at 1 Mbps**. The supplied vendor
-manual does not define CAN FD for this actuator.
-
-- `knowledge/PA043_CAN_PROTOCOL_AUDIT.md` records verified mappings,
-  contradictions, and undocumented behavior.
-- `lande_probe.py` performs parsed, read-only parameter discovery.
-- `lande_diag.py` performs raw parser-independent diagnostics.
-
-## DaMiao protocol audit
-
-- `knowledge/DAMIAO_PROTOCOL_AUDIT.md` compares DM-J6248P and DM-J8009P-2EC against the supplied J8009P manual, DaMiao official SDK, and the `damiao-motor` dependency.
-- DM-J6248P exposes MIT / POS_VEL / VEL / FORCE_POS.
-- DM-J8009P-2EC exposes the three modes explicitly documented in its V1.0 manual: MIT / POS_VEL / VEL.
-
-
-## Vendor refactor package
-
-See `knowledge/ARCHITECTURE.md` for the complete design and
-`knowledge/REFACTOR_RUNBOOK.md` for the local migration and validation sequence.
-`knowledge/HARDWARE_OBSERVATIONS.md` separates user-observed facts from candidates.
-
-Runtime UART is intentionally excluded. No CAN-FD backend or Hybrid control
-has been enabled. Existing motor keys and HTTP routes are retained.
-
-The GUI now groups models by vendor. `gs_usb` is a direct USB host backend;
-`socketcan` is a Linux OS interface backend. They are not merged, and the
-application never automatically unbinds a kernel driver or switches protocols.
-
-CH340 serial devices remain listed but are not automatically classified as
-Waveshare. Select `usbcan_a` and the actual channel explicitly after identifying
-hardware. Selecting an interface is not the same as receiving a motor reply.
-
-No-hardware catalog (does not enumerate devices unless `--devices` is added):
-
-```powershell
-python -m diagnostics.catalog
-```
-
-Validation with the active project's interpreter:
-
-```powershell
-.\.venv\Scripts\python.exe tools/verify_refactor.py
-```
-
-`--mock-only` runs syntax and isolated architecture tests only. It does not
-approve the dependency integration, USB drivers, CAN hardware, or motion.
+- Motor enable and motion commands can move hardware immediately.
+- Confirm CAN wiring, supply voltage, motor model, IDs, control mode, and limits
+  before enabling motion.
+- Do not infer CAN protocol from a COM port alone.
+- CAN-FD candidates are not enabled until both protocol and host-backend support
+  are validated.
+- PA043 destructive parameter operations remain guarded.

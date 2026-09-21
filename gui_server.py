@@ -291,7 +291,7 @@ def _position_command_kwargs(mode: str, position: float, velocity: float) -> dic
     if mode == "pos_vel":
         return {
             "position": position,
-            "velocity_limit": abs(velocity),
+            "velocity_limit": _max_speed_rad_s,
         }
     if mode == "servo":
         return {
@@ -433,11 +433,13 @@ def state():
 def connect():
     global _motors, _tracks, _selected_ids, _focus_id, _control_mode
     data = request.get_json(silent=True) or {}
-    adapter = str(data.get("adapter") or "auto")
+    adapter = str(data.get("adapter") or "").strip()
     channel = data.get("channel")
     motor_model = str(data.get("motor_model") or "").strip()
     bus_profile = str(data.get("bus_profile") or "").strip() or None
 
+    if not adapter:
+        return _json_error("adapter is required")
     if not motor_model:
         return _json_error("motor_model is required")
 
@@ -710,11 +712,19 @@ def spin():
                     track["cmd_pos"] = 0.0 if pos is None else pos
                 track["target_pos"] = track["cmd_pos"]
                 track["spin_dir"] = direction
+
         else:
             for mid in ids:
                 if mid in _tracks:
-                    _tracks[mid]["spin_dir"] = 0
-                    _tracks[mid]["target_pos"] = _tracks[mid].get("cmd_pos")
+                    track = _tracks[mid]
+                    track["spin_dir"] = 0
+
+                    current = _state_pos(_safe_state(mid))
+                    if current is None:
+                        current = track.get("cmd_pos")
+
+                    track["cmd_pos"] = current
+                    track["target_pos"] = current
 
         return jsonify({"success": True, "state": _state_payload()})
 
