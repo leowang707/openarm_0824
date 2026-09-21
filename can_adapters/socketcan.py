@@ -10,6 +10,7 @@ from .registry import register_adapter
 
 
 class SocketCANAdapter:
+    backend_kind = 'os_stack'
     capabilities = AdapterCapabilities(
         classic_can=True,
         can_fd=False,

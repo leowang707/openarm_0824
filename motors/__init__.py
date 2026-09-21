@@ -6,6 +6,7 @@ from .registry import (
     MotorSpec,
     get_motor_spec,
     list_motor_models,
+    list_motor_brands,
     motor_keys,
     register_motor,
 )
@@ -20,6 +21,7 @@ __all__ = [
     "MotorSpec",
     "get_motor_spec",
     "list_motor_models",
+    "list_motor_brands",
     "motor_keys",
     "register_motor",
 ]

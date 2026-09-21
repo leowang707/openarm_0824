@@ -14,6 +14,7 @@ SLCAN_TTY_BAUD = 115_200
 
 
 class SlcanAdapter:
+    backend_kind = 'serial'
     capabilities = AdapterCapabilities(
         classic_can=True,
         can_fd=False,

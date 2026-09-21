@@ -10,6 +10,7 @@ from .registry import register_adapter
 
 
 class GsUsbAdapter:
+    backend_kind = 'direct_usb'
     capabilities = AdapterCapabilities(
         classic_can=True,
         can_fd=False,
@@ -39,6 +40,7 @@ class GsUsbAdapter:
                     adapter=self.key,
                     channel=index,
                     label=f"gs_usb device {index}",
+                    hardware_family="gs_usb_compatible",
                     transport=self.transport,
                     metadata=dict(config),
                 )

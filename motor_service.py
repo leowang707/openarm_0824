@@ -13,7 +13,7 @@ from can_adapters import (
     open_can_bus,
     resolve_adapter,
 )
-from motors import get_motor_spec, list_motor_models
+from motors import get_motor_spec, list_motor_models, list_motor_brands
 
 
 class MotorService:
@@ -32,10 +32,11 @@ class MotorService:
         self.fd: bool = False
 
     @staticmethod
-    def capabilities() -> dict[str, Any]:
+    def capabilities(*, include_devices: bool = True) -> dict[str, Any]:
         return {
             "adapters": list_adapter_types(),
-            "devices": list_adapter_devices(include_unknown_serial=True),
+            "devices": list_adapter_devices(include_unknown_serial=True) if include_devices else [],
+            "brands": list_motor_brands(),
             "motors": list_motor_models(),
         }
 
@@ -53,8 +54,6 @@ class MotorService:
         bitrate: int | None = None,
     ) -> dict[str, Any]:
         with self._lock:
-            self.disconnect()
-
             motor_spec = get_motor_spec(motor_model)
             profile = motor_spec.get_bus_profile(bus_profile)
 
@@ -62,6 +61,12 @@ class MotorService:
                 raise RuntimeError(
                     f"{motor_spec.name} bus profile {profile.key!r} is recorded "
                     "but not implemented by this repository yet"
+                )
+
+            if profile.protocol_key and profile.protocol_key != motor_spec.protocol_family:
+                raise RuntimeError(
+                    f"No motor protocol binding for {profile.protocol_key!r}; "
+                    "a CAN-FD flag alone cannot select a wire protocol"
                 )
 
             if bitrate is not None and int(bitrate) != profile.nominal_bitrate:
@@ -84,10 +89,15 @@ class MotorService:
                     f"adapter {kind!r} does not expose Classic CAN"
                 )
 
+            # Do not close a working connection until the requested configuration
+            # has passed validation. Opening an adapter does not prove motor RX.
+            self.disconnect()
             bus = open_can_bus(
                 adapter=kind,
                 channel=resolved_channel,
                 bitrate=profile.nominal_bitrate,
+                fd=profile.fd,
+                data_bitrate=profile.data_bitrate,
             )
 
             try:
@@ -143,6 +153,7 @@ class MotorService:
     def connection_info(self) -> dict[str, Any]:
         return {
             "connected": self.connected,
+            "connection_state": "adapter_open" if self.connected else "disconnected",
             "adapter": self.adapter,
             "channel": self.channel,
             "motor_model": self.motor_model,

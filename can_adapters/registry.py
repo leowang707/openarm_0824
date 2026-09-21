@@ -38,6 +38,7 @@ def list_adapter_types() -> list[dict[str, Any]]:
             "label": adapter.label,
             "transport": adapter.transport,
             "supported": bool(adapter.supported()),
+            "backend_kind": getattr(adapter, "backend_kind", adapter.transport),
             "capabilities": adapter.capabilities.to_dict(),
         }
         for adapter in _ADAPTERS.values()
@@ -91,6 +92,7 @@ def discover_all(include_unknown_serial: bool = True) -> list[AdapterDevice]:
             devices.append(
                 AdapterDevice(
                     adapter="unknown_serial",
+                    auto_selectable=False,
                     channel=port.device,
                     label=f"{port.device} — {port.description or 'Unknown serial device'}",
                     transport="serial",
@@ -121,7 +123,7 @@ def resolve_adapter(requested: str = "auto", channel: Any = None) -> tuple[str, 
             )
 
         if not has_channel:
-            discovered = adapter.discover()
+            discovered = [d for d in adapter.discover() if d.auto_selectable]
             if len(discovered) == 1:
                 channel = discovered[0].channel
             elif len(discovered) > 1:
@@ -153,7 +155,8 @@ def resolve_adapter(requested: str = "auto", channel: Any = None) -> tuple[str, 
                 try:
                     for device in adapter.discover():
                         if str(device.channel).upper() == text.upper():
-                            matches.append((key, device.channel))
+                            if device.auto_selectable:
+                                matches.append((key, device.channel))
                 except Exception:
                     pass
 
@@ -191,7 +194,7 @@ def resolve_adapter(requested: str = "auto", channel: Any = None) -> tuple[str, 
 
     # auto + no channel
     detected = discover_all(include_unknown_serial=False)
-    detected = [d for d in detected if d.adapter in _ADAPTERS]
+    detected = [d for d in detected if d.adapter in _ADAPTERS and d.auto_selectable]
 
     if len(detected) == 1:
         return detected[0].adapter, detected[0].channel
@@ -207,13 +210,21 @@ def resolve_adapter(requested: str = "auto", channel: Any = None) -> tuple[str, 
 class ThreadSafeBus:
     """Serialize individual send/recv operations around a python-can Bus."""
 
-    def __init__(self, bus: Any, *, adapter_kind: str, channel: Any) -> None:
+    def __init__(self, bus: Any, *, adapter_kind: str, channel: Any, fd: bool = False) -> None:
         self._bus = bus
         self._io_lock = threading.RLock()
+        self.fd = fd
         self.adapter_kind = adapter_kind
         self.channel = channel
 
     def send(self, msg: Any, timeout: Optional[float] = None) -> Any:
+        is_fd = bool(getattr(msg, "is_fd", False))
+        if is_fd and not self.fd:
+            raise ValueError("CAN-FD frame rejected on a Classic-CAN connection")
+        if getattr(msg, "bitrate_switch", False) and not is_fd:
+            raise ValueError("BRS is only valid for CAN-FD frames")
+        if not is_fd and len(msg.data) > 8:
+            raise ValueError("Classic CAN payload exceeds 8 bytes")
         with self._io_lock:
             return self._bus.send(msg, timeout=timeout)
 
@@ -237,16 +248,34 @@ class ThreadSafeBus:
 
 
 def open_can_bus(
-    adapter: str = "auto",
-    channel: Any = None,
-    bitrate: int = 1_000_000,
-    **kwargs: Any,
+    adapter: str = "auto", channel: Any = None, bitrate: int = 1_000_000,
+    *, fd: bool = False, data_bitrate: int | None = None, **kwargs: Any,
 ) -> ThreadSafeBus:
+    """Open a supported backend. No silent FD-to-Classic fallback."""
+    if type(fd) is not bool:
+        raise TypeError("fd must be bool")
+    if type(bitrate) is not int or bitrate <= 0:
+        raise ValueError("bitrate must be a positive integer")
+    if not fd and data_bitrate is not None:
+        raise ValueError("Classic CAN must not specify data_bitrate")
+    if fd and (type(data_bitrate) is not int or data_bitrate <= 0):
+        raise ValueError("CAN-FD requires a positive data_bitrate")
+
+    # Reject incompatible explicit backends before any device discovery/open.
+    requested = str(adapter or "auto").strip().lower()
+    if requested != "auto":
+        selected = get_adapter(requested)
+        if fd and not selected.capabilities.can_fd:
+            raise RuntimeError(f"Backend {requested!r} has no CAN-FD implementation")
+        if not fd and not selected.capabilities.classic_can:
+            raise RuntimeError(f"Backend {requested!r} has no Classic-CAN implementation")
     kind, resolved_channel = resolve_adapter(adapter, channel)
     backend = get_adapter(kind)
-    raw_bus = backend.open(resolved_channel, int(bitrate), **kwargs)
-    return ThreadSafeBus(
-        raw_bus,
-        adapter_kind=kind,
-        channel=resolved_channel,
-    )
+    if fd and not backend.capabilities.can_fd:
+        raise RuntimeError(f"Backend {kind!r} has no CAN-FD implementation")
+    if not fd and not backend.capabilities.classic_can:
+        raise RuntimeError(f"Backend {kind!r} has no Classic-CAN implementation")
+    if fd:
+        kwargs.update(fd=True, data_bitrate=data_bitrate)
+    raw_bus = backend.open(resolved_channel, bitrate, **kwargs)
+    return ThreadSafeBus(raw_bus, adapter_kind=kind, channel=resolved_channel, fd=fd)

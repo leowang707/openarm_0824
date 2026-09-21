@@ -4,7 +4,7 @@ import threading
 import time
 from typing import Any
 
-from lande_motor import (
+from .protocol import (
     LandeMotor,
     MODE_NAMES,
     PARAMETER_ADDRESSABLE_MOTOR_ID_MAX,
@@ -14,8 +14,8 @@ from lande_motor import (
     MODE_VELOCITY,
 )
 
-from .base import MotorBackend
-from .registry import BusProfile, MotorSpec, register_motor
+from ..base import MotorBackend
+from ..registry import BusProfile, MotorSpec, register_motor
 
 
 MODE_KEYS = {
@@ -31,6 +31,7 @@ PA043_CLASSIC_1M = BusProfile(
     label="Classic CAN 2.0A 1 Mbps",
     fd=False,
     nominal_bitrate=1_000_000,
+    protocol_key="lande_pa043",
     notes="PA043 manual specifies Classic CAN2.0A standard frames at 1 Mbps.",
 )
 
@@ -245,5 +246,7 @@ register_motor(
         # Keep PA043 motion locked by default until real feedback has been
         # validated on the bench.
         motion_safe_default=False,
+        brand="lande", brand_name="LANDA", family="PA043",
+        protocol_family="lande_pa043",
     )
 )

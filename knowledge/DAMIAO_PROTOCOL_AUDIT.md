@@ -120,50 +120,19 @@ The 12.5 / 45 / 54 MIT limits come from the DaMiao official SDK. The supplied
 8-page J8009P V1.0 manual says P_MAX/V_MAX/T_MAX are configurable but does not
 state these default numeric values, so the repo treats them as SDK-derived.
 
-## Hardware observation: DM-J8009P-2EC FW 6417 / Sub 004
+## Hardware observation: J8009-series unit, FW 6417 / Sub 004
 
-A tested DM-J8009P-2EC reported the following directly over its
-921600-baud debug UART during boot:
+The exact DM-J8009-2EC vs DM-J8009P-2EC variant is not established by the UART
+log. The log reports IDs `0x001` / `0x011`, baud text `5.00Mbps`, current MIT,
+and a fourth menu entry named `Hybrid`. It does not print nominal/data phase
+rates or BRS and does not prove a specific Hybrid wire format.
 
-```text
-Firmware Version: 6417
-Sub Version: 004
+A `canfd_1m_5m` candidate is retained with `implemented=False`. Its 1M/5M
+numbers come from the official CAN-FD workflow, not a measurement on this unit.
+No automatic Classic/FD fallback or UART setup commands are implemented.
 
-CAN ID:     0x001
-MASTER ID:  0x011
-CAN Baud:   5.00Mbps
-
-Control Mode:
-1: MIT Mode
-2: position-speed cascade Mode
-3: speed Mode
-4: Hybrid control Mode
-```
-
-The UART path was verified bidirectionally:
-
-```text
-Motor -> PC boot/debug output : PASS
-PC -> Motor `m` command       : PASS
-PC -> Motor ESC 0x1B          : PASS
-```
-
-The Waveshare USB-CAN-A path was independently verified in internal loopback
-mode. With the motor at the observed FW 6417 / Sub 004 configuration, the
-Classic CAN 1 Mbps path produced no reply when querying the known motor CAN ID
-`0x001`.
-
-These are hardware observations for FW 6417 / Sub 004. They do not invalidate
-the supplied J8009P V1.0 manual, which documents a Classic CAN 1 Mbps profile.
-
-Repository policy:
-
-- retain the documented Classic CAN 1 Mbps J8009P implementation
-- do not assume the 1 Mbps and reported 5 Mbps configurations auto-switch
-- do not silently treat firmware `Hybrid` as identical to Classic `FORCE_POS`
-- do not send this observed 5 Mbps configuration through the current Classic
-  CAN backend
-- add CAN-FD transport/profile support separately after protocol verification
+See `HARDWARE_OBSERVATIONS.md` for the actual bench evidence and unresolved
+questions. Internal adapter loopback is not external motor-link validation.
 
 ## Automatic scan limitation
 
@@ -177,3 +146,21 @@ dependency routing limitation, not a claimed motor-hardware ID limit.
 DaMiao provides separate CAN-FD SDK examples for some products, but this repo's
 DaMiao integration remains on Classic CAN for these backends. The supplied
 J8009P V1.0 manual specifically documents standard CAN at 1 Mbps.
+
+
+## Refactor implementation boundary
+
+- Shared integration: `motors/damiao/classic.py`; model-only metadata:
+  `motors/damiao/models.py`; transport metadata: `profiles.py`.
+- Legacy imports `from motors.damiao import DaMiao6248PBackend` and
+  `DaMiao8009PBackend` remain supported through the package initializer.
+- The external `damiao-motor` library remains the low-level implementation.
+  No copied parallel MIT encoder is introduced by this refactor.
+- The scan's motion-command fallback was removed. A failed status request now
+  fails explicitly rather than calling an API that may auto-enable a motor.
+- `disconnect()` retains existing disable/cleanup behavior; a full connection
+  lifecycle is therefore not equivalent to a passive bus monitor.
+- Read-back cache semantics, response routing, feedback IDs, non-MIT state
+  command semantics and dependency auto-enable behavior still require a
+  separate integration audit and physical acceptance; directory refactoring
+  must not be interpreted as validating them.

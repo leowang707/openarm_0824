@@ -27,6 +27,9 @@ class AdapterDevice:
     label: str
     transport: str
     metadata: dict[str, Any] = field(default_factory=dict)
+    hardware_family: str | None = None
+    auto_selectable: bool = True
+    capabilities: AdapterCapabilities | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -35,6 +38,10 @@ class AdapterDevice:
             "label": self.label,
             "transport": self.transport,
             "metadata": dict(self.metadata),
+            "backend": self.adapter,
+            "hardware_family": self.hardware_family,
+            "auto_selectable": self.auto_selectable,
+            "capabilities": self.capabilities.to_dict() if self.capabilities else None,
         }
 
 

@@ -207,6 +207,7 @@ def _state_payload() -> dict[str, Any]:
     return {
         **info,
         "motor_model_name": spec.name if spec else None,
+        "motor_brand": spec.brand if spec else None,
         "supported_modes": list(spec.supported_modes) if spec else [],
         "motion_allowed": _motion_allowed(),
         "dial_allowed": _motion_allowed() and _position_mode(),
@@ -419,7 +420,7 @@ def index():
 
 @app.route("/api/capabilities")
 def capabilities():
-    return jsonify({"success": True, **MotorService.capabilities()})
+    return jsonify({"success": True, **MotorService.capabilities(include_devices=request.args.get("devices", "1") != "0")})
 
 
 @app.route("/api/state")

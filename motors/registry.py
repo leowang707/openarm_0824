@@ -3,40 +3,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Type
 
+from can_profiles import BusProfile  # compatibility re-export
 from .base import MotorBackend
-
-
-@dataclass(frozen=True)
-class BusProfile:
-    """Physical CAN transport/profile for a motor configuration."""
-
-    key: str
-    label: str
-    fd: bool
-    nominal_bitrate: int
-    data_bitrate: int | None = None
-    implemented: bool = True
-    notes: str = ""
-
-    def __post_init__(self) -> None:
-        if self.nominal_bitrate <= 0:
-            raise ValueError("nominal_bitrate must be positive")
-        if self.fd:
-            if self.data_bitrate is None or self.data_bitrate <= 0:
-                raise ValueError("CAN-FD profile requires positive data_bitrate")
-        elif self.data_bitrate is not None:
-            raise ValueError("Classic CAN profile must not define data_bitrate")
-
-    def to_dict(self) -> dict:
-        return {
-            "key": self.key,
-            "label": self.label,
-            "fd": self.fd,
-            "nominal_bitrate": self.nominal_bitrate,
-            "data_bitrate": self.data_bitrate,
-            "implemented": self.implemented,
-            "notes": self.notes,
-        }
 
 
 @dataclass(frozen=True)
@@ -50,6 +18,10 @@ class MotorSpec:
     default_scan_end: int
     supported_modes: tuple[str, ...]
     motion_safe_default: bool = False
+    brand: str = "unknown"
+    brand_name: str = "Unknown"
+    family: str = ""
+    protocol_family: str = ""
 
     def __post_init__(self) -> None:
         keys = [profile.key for profile in self.bus_profiles]
@@ -83,6 +55,10 @@ class MotorSpec:
         return {
             "key": self.key,
             "name": self.name,
+            "brand": self.brand,
+            "brand_name": self.brand_name,
+            "family": self.family,
+            "protocol_family": self.protocol_family,
             "default_bitrate": default_profile.nominal_bitrate,
             "default_bus_profile": self.default_bus_profile,
             "bus_profiles": [profile.to_dict() for profile in self.bus_profiles],
@@ -117,3 +93,11 @@ def motor_keys() -> list[str]:
 
 def list_motor_models() -> list[dict]:
     return [spec.to_dict() for spec in _MOTORS.values()]
+
+
+def list_motor_brands() -> list[dict[str, str]]:
+    """List registered vendors without opening adapters or probing motors."""
+    return [
+        {"key": key, "name": name}
+        for key, name in sorted({s.brand: s.brand_name for s in _MOTORS.values()}.items())
+    ]

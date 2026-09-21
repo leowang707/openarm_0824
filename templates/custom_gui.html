@@ -69,14 +69,21 @@
 
 <main>
   <section class="card">
+    <label>Motor Brand</label>
+    <select id="motorBrand"></select>
     <label>Motor Model</label>
     <select id="motorModel"></select>
+    <label>Bus Profile</label>
+    <select id="busProfile"></select>
+    <div id="profileHint" class="sub"></div>
 
-    <label>CAN Adapter</label>
+    <label>CAN Backend / Host Interface</label>
     <select id="adapter"></select>
 
     <label>Device / Channel</label>
     <select id="channel"></select>
+    <div class="sub">COM port is not proof of CAN protocol. CH340 requires manual backend selection.</div>
+    <button class="ghost" id="refreshDevices">Refresh devices</button>
 
     <div class="row">
       <button class="primary" id="connect">連線並掃描</button>
@@ -256,8 +263,31 @@ for (let i = 0; i < 36; i++) {
   ticks.appendChild(text);
 });
 
+function selectedMotorSpec() {
+  return (caps?.motors || []).find(m => m.key === $("motorModel").value);
+}
+function populateMotorModels() {
+  const old = $("motorModel").value;
+  const choices = (caps?.motors || []).filter(m => m.brand === $("motorBrand").value);
+  $("motorModel").innerHTML = choices.map(m => `<option value="${esc(m.key)}">${esc(m.name)}</option>`).join('');
+  if (choices.some(m => m.key === old)) $("motorModel").value = old;
+  populateProfiles();
+}
+function updateProfileHint() {
+  const p = selectedMotorSpec()?.bus_profiles.find(p => p.key === $("busProfile").value);
+  $("profileHint").textContent = p ? `${p.label}: ${p.notes || ''}` : '';
+}
+function populateProfiles() {
+  const model = selectedMotorSpec();
+  const choices = model?.bus_profiles || [];
+  const old = $("busProfile").value;
+  $("busProfile").innerHTML = choices.map(p => `<option value="${esc(p.key)}" ${p.implemented ? '' : 'disabled'}>${esc(p.label)}${p.implemented ? '' : ' [not implemented]'}</option>`).join('');
+  $("busProfile").value = choices.some(p => p.key === old && p.implemented) ? old : (model?.default_bus_profile || '');
+  updateProfileHint();
+}
 function populateChannels() {
   const adapter = $("adapter").value;
+  const old = $("channel").value;
   let devices = caps?.devices || [];
   if (adapter === "slcan" || adapter === "usbcan_a") {
     devices = devices.filter(d => d.transport === "serial");
@@ -267,6 +297,7 @@ function populateChannels() {
   $("channel").innerHTML = devices.length
     ? devices.map(d => `<option value="${esc(d.channel)}">${esc(d.label)}</option>`).join('')
     : `<option value="">(auto/default)</option>`;
+  if (devices.some(d => String(d.channel) === old)) $("channel").value = old;
 }
 
 function renderMotors(motors) {
@@ -288,10 +319,24 @@ function renderMotors(motors) {
 function applyState(s) {
   state = s;
   const connected = !!s.connected;
+  if (connected && caps && (s.motor_model !== $("motorModel").value || s.bus_profile !== $("busProfile").value)) {
+    if (s.motor_brand) $("motorBrand").value = s.motor_brand;
+    populateMotorModels();
+    $("motorModel").value = s.motor_model;
+    populateProfiles();
+    if (s.bus_profile) $("busProfile").value = s.bus_profile;
+    updateProfileHint();
+    $("adapter").value = s.adapter;
+    populateChannels();
+    $("channel").value = String(s.channel);
+  }
   $("connLabel").textContent = connected
-    ? `${s.motor_model_name} · ${s.adapter}:${s.channel} · ${s.bitrate} bit/s`
+    ? `${s.motor_model_name} · ${s.bus_profile || 'default'} · ${s.adapter}:${s.channel} · ${s.bitrate} bit/s (adapter open; motor RX must be verified)`
     : '未連線';
 
+  for (const id of ["motorBrand", "motorModel", "busProfile", "adapter", "channel", "refreshDevices"]) {
+    $(id).disabled = connected;
+  }
   const modes = s.supported_modes || [];
   const wantedMode = s.control_mode || $("mode").value;
   $("mode").innerHTML = modes.map(m => `<option value="${esc(m)}">${esc(m)}</option>`).join('');
@@ -357,10 +402,15 @@ function applyState(s) {
 
 async function refreshCaps() {
   const data = await api('/api/capabilities');
+  const brand = $("motorBrand").value;
+  const backend = $("adapter").value;
   caps = data;
-  $("motorModel").innerHTML = (caps.motors || []).map(m => `<option value="${esc(m.key)}">${esc(m.name)}</option>`).join('');
-  $("adapter").innerHTML = `<option value="auto">Auto</option>` +
-    (caps.adapters || []).filter(a => a.supported).map(a => `<option value="${esc(a.key)}">${esc(a.label)}</option>`).join('');
+  $("motorBrand").innerHTML = (caps.brands || []).map(b => `<option value="${esc(b.key)}">${esc(b.name)}</option>`).join('');
+  if ((caps.brands || []).some(b => b.key === brand)) $("motorBrand").value = brand;
+  populateMotorModels();
+  $("adapter").innerHTML = `<option value="auto">Auto (identified interfaces only)</option>` +
+    (caps.adapters || []).filter(a => a.supported).map(a => `<option value="${esc(a.key)}">${esc(a.label)} [${esc(a.backend_kind || a.transport)}]</option>`).join('');
+  if ((caps.adapters || []).some(a => a.key === backend)) $("adapter").value = backend;
   populateChannels();
 }
 
@@ -374,7 +424,14 @@ async function pushSelection(focus=null) {
   applyState(data.state);
 }
 
+$("motorBrand").onchange = populateMotorModels;
+$("motorModel").onchange = populateProfiles;
+$("busProfile").onchange = updateProfileHint;
 $("adapter").onchange = populateChannels;
+$("refreshDevices").onclick = async () => {
+  if (state?.connected) { log('Disconnect before refreshing interfaces.'); return; }
+  try { await refreshCaps(); } catch(e) { log(`ERROR: ${e.message}`); }
+};
 
 $("connect").onclick = async () => {
   try {
@@ -383,6 +440,7 @@ $("connect").onclick = async () => {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({
         motor_model:$("motorModel").value,
+        bus_profile:$("busProfile").value || null,
         adapter:$("adapter").value,
         channel:$("channel").value || null
       })

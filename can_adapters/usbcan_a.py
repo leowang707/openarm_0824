@@ -13,6 +13,7 @@ CH340_VID, CH340_PID = 0x1A86, 0x7523
 
 
 class UsbCanAAdapter:
+    backend_kind = 'serial'
     capabilities = AdapterCapabilities(
         classic_can=True,
         can_fd=False,
@@ -46,7 +47,9 @@ class UsbCanAAdapter:
                 AdapterDevice(
                     adapter=self.key,
                     channel=port.device,
-                    label=f"{port.device} — Waveshare USB-CAN-A / CH340",
+                    label=f"{port.device} — CH340 serial candidate (protocol unverified)",
+                    hardware_family="ch340_serial",
+                    auto_selectable=False,
                     transport=self.transport,
                     metadata={
                         "vid": vid,

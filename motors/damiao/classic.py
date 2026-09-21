@@ -4,50 +4,9 @@ import threading
 import time
 from typing import Any
 
-from .base import MotorBackend
-from .registry import BusProfile, MotorSpec, register_motor
-
-
-MODE_TO_DRIVER = {
-    "mit": "MIT",
-    "pos_vel": "POS_VEL",
-    "vel": "VEL",
-    "force_pos": "FORCE_POS",
-}
-
-REGISTER_TO_MODE = {
-    1: "mit",
-    2: "pos_vel",
-    3: "vel",
-    4: "force_pos",
-}
-
-# damiao-motor currently routes feedback by the low 4 bits of D[0].
-# Automatic discovery is therefore limited to logical IDs 1..15 so aliases
-# such as 0x01 vs 0x11 cannot be silently misidentified.
-SCAN_ID_MIN = 0x01
-SCAN_ID_MAX = 0x0F
-
-CLASSIC_1M = BusProfile(
-    key="classic_1m",
-    label="Classic CAN 1 Mbps",
-    fd=False,
-    nominal_bitrate=1_000_000,
-    notes="Documented DaMiao Classic-CAN profile.",
-)
-
-J8009_CANFD_1M_5M_OBSERVED = BusProfile(
-    key="canfd_1m_5m",
-    label="CAN-FD 1M / 5M (FW6417 observed)",
-    fd=True,
-    nominal_bitrate=1_000_000,
-    data_bitrate=5_000_000,
-    implemented=False,
-    notes=(
-        "FW 6417 / Sub 004 reported CAN Baud 5.00 Mbps over UART. "
-        "Recorded for planning only; CAN-FD protocol/backend is not implemented."
-    ),
-)
+from ..base import MotorBackend
+from .common import MODE_TO_DRIVER, REGISTER_TO_MODE, SCAN_ID_MIN, SCAN_ID_MAX
+from .models import J6248P, J8009P
 
 
 class _DaMiaoBackend(MotorBackend):
@@ -82,14 +41,13 @@ class _DaMiaoBackend(MotorBackend):
 
     def _ensure_motor(self, motor_id: int, feedback_id: int = 0x00):
         motor_id = int(motor_id)
-        try:
-            return self.controller.add_motor(
-                motor_id=motor_id,
-                feedback_id=feedback_id,
-                motor_type=self.motor_type,
-            )
-        except ValueError:
+        if motor_id in self.controller.motors:
             return self.controller.get_motor(motor_id)
+        return self.controller.add_motor(
+            motor_id=motor_id,
+            feedback_id=feedback_id,
+            motor_type=self.motor_type,
+        )
 
     def get_motor(self, motor_id: int):
         return self.controller.get_motor(int(motor_id))
@@ -130,19 +88,13 @@ class _DaMiaoBackend(MotorBackend):
 
                 try:
                     motor.request_motor_feedback()
-                except Exception:
-                    # Compatibility fallback. A zero-gain MIT frame does not
-                    # enable the motor by itself.
-                    try:
-                        motor.send_cmd_mit(
-                            target_position=0.0,
-                            target_velocity=0.0,
-                            stiffness=0.0,
-                            damping=0.0,
-                            feedforward_torque=0.0,
-                        )
-                    except Exception:
-                        continue
+                except Exception as exc:
+                    # A scan must not call motion APIs: some dependency versions
+                    # implicitly enable a disabled motor when sending a command.
+                    raise RuntimeError(
+                        f"Read-only status request failed for ID {motor_id}; "
+                        "no motion-command fallback was sent"
+                    ) from exc
 
                 deadline = time.perf_counter() + 0.15
                 while time.perf_counter() < deadline:
@@ -288,47 +240,14 @@ class _DaMiaoBackend(MotorBackend):
 
 
 class DaMiao6248PBackend(_DaMiaoBackend):
-    model_key = "damiao_6248p"
-    model_name = "DaMiao DM-J6248P"
-    motor_type = "6248P"
-    supported_modes = ("mit", "pos_vel", "vel", "force_pos")
+    model_key = J6248P.key
+    model_name = J6248P.name
+    motor_type = J6248P.sdk_motor_type
+    supported_modes = J6248P.supported_modes
 
 
 class DaMiao8009PBackend(_DaMiaoBackend):
-    model_key = "damiao_8009p"
-    model_name = "DaMiao DM-J8009P-2EC"
-    # damiao-motor / official SDK preset name for DM-J8009P-2EC.
-    motor_type = "8009"
-    # The supplied J8009P V1.0 manual documents these three modes. It does
-    # not document generic FORCE_POS / 0x300+ID, so do not expose it here.
-    supported_modes = ("mit", "pos_vel", "vel")
-
-
-for spec in (
-    MotorSpec(
-        key=DaMiao6248PBackend.model_key,
-        name=DaMiao6248PBackend.model_name,
-        backend=DaMiao6248PBackend,
-        bus_profiles=(CLASSIC_1M,),
-        default_bus_profile="classic_1m",
-        default_scan_start=SCAN_ID_MIN,
-        default_scan_end=SCAN_ID_MAX,
-        supported_modes=DaMiao6248PBackend.supported_modes,
-        motion_safe_default=True,
-    ),
-    MotorSpec(
-        key=DaMiao8009PBackend.model_key,
-        name=DaMiao8009PBackend.model_name,
-        backend=DaMiao8009PBackend,
-        bus_profiles=(
-            CLASSIC_1M,
-            J8009_CANFD_1M_5M_OBSERVED,
-        ),
-        default_bus_profile="classic_1m",
-        default_scan_start=SCAN_ID_MIN,
-        default_scan_end=SCAN_ID_MAX,
-        supported_modes=DaMiao8009PBackend.supported_modes,
-        motion_safe_default=True,
-    ),
-):
-    register_motor(spec)
+    model_key = J8009P.key
+    model_name = J8009P.name
+    motor_type = J8009P.sdk_motor_type
+    supported_modes = J8009P.supported_modes
