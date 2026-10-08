@@ -21,6 +21,7 @@ def main() -> int:
         count+=1
     print(f"Syntax PASS: {count} Python files; interpreter={sys.executable}",flush=True)
     subprocess.run([sys.executable,str(ROOT/"tests/refactor_contract_checks.py")],cwd=ROOT,check=True)
+    subprocess.run([sys.executable,str(ROOT/"tests/pa043_motion_lock_checks.py")],cwd=ROOT,check=True)
     if args.mock_only:
         print("MOCK-ONLY PASS. Real dependency integration and hardware remain unverified.")
         return 0

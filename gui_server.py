@@ -19,6 +19,40 @@ MAX_SPEED_DEG_S = 60.0
 DEFAULT_SPEED_DEG_S = 18.0
 DEFAULT_KP = 4.0
 DEFAULT_KD = 2.0
+DEFAULT_VEL_KP = 0.0
+DEFAULT_VEL_KD = 0.0
+DEFAULT_VEL_KI = 0.0
+
+# GUI command defaults by motor model and active control mode.
+# DaMiao values preserve the legacy master-branch MIT defaults.
+# LANDA values follow the LDP043A01 vendor-manual recommendations.
+CONTROL_DEFAULTS = {
+    "damiao_6248p": {
+        "mit": {"kp": 4.0, "kd": 2.0},
+    },
+    "damiao_8009p": {
+        "mit": {"kp": 4.0, "kd": 2.0},
+    },
+    "lande_pa043": {
+        "servo": {
+            "kp": 5.0,
+            "kd": 0.0,
+            "vel_kp": 10.0,
+            "vel_kd": 0.0,
+            "vel_ki": 0.02,
+        },
+        "torque_position": {
+            "kp": 3.0,
+            "kd": 0.1,
+        },
+        "velocity": {
+            "vel_kp": 1.0,
+            "vel_kd": 0.0,
+            "vel_ki": 0.002,
+        },
+    },
+}
+
 POSITION_LIMIT_RAD = 12.0
 POSITION_MODES = {"mit", "pos_vel", "servo", "torque_position"}
 
@@ -35,14 +69,18 @@ _control_mode = ""
 _max_speed_rad_s = math.radians(DEFAULT_SPEED_DEG_S)
 _kp = DEFAULT_KP
 _kd = DEFAULT_KD
+_vel_kp = DEFAULT_VEL_KP
+_vel_kd = DEFAULT_VEL_KD
+_vel_ki = DEFAULT_VEL_KI
 _errors: list[dict[str, Any]] = []
 _error_seq = 0
 _loop_thread: threading.Thread | None = None
 _loop_stop = threading.Event()
 
-# PA043 stays motion-locked by default. Set ALLOW_PA043_MOTION=1 only after
-# validating feedback and safe hold behavior on the bench.
-ALLOW_PA043_MOTION = os.environ.get("ALLOW_PA043_MOTION", "0") == "1"
+# PA043 motion permission is session-scoped and must be explicitly approved
+# through the GUI. A leftover environment variable cannot bypass this lock.
+_pa043_motion_unlocked = False
+PA043_UNLOCK_CONFIRMATION = "I_ACCEPT_PA043_MOTION"
 
 
 def _json_error(message: str, status: int = 400):
@@ -58,12 +96,85 @@ def _motion_allowed() -> bool:
     if not model:
         return False
     if model == "lande_pa043":
-        return ALLOW_PA043_MOTION
+        return _pa043_motion_unlocked and _pa043_unlock_blocker() is None
     return bool(get_motor_spec(model).motion_safe_default)
+
+
+def _pa043_unlock_blocker(*, require_disabled: bool = False) -> str | None:
+    """Fail closed if the connected PA043 and its true mode are not verified."""
+    if not _service.connected or _service.motor_model != "lande_pa043":
+        return "PA043 is not connected"
+    if not _motors:
+        return "No PA043 motor has been discovered"
+    supported_modes = get_motor_spec("lande_pa043").supported_modes
+    if _control_mode not in supported_modes:
+        return "No supported PA043 control mode has been selected"
+    for info in _motors:
+        # _choose_control_mode can fall back to servo when the real motor mode
+        # times out. Never use that fallback as evidence for unlocking motion.
+        if info.get("control_mode_key") != _control_mode:
+            return (
+                f"Motor ID {info.get('id')} mode is unknown or differs from "
+                f"selected mode {_control_mode!r}; rescan before unlocking"
+            )
+    if require_disabled and any(track.get("enabled") for track in _tracks.values()):
+        return "Disable all motors before unlocking PA043 motion"
+    return None
+
+
+def _relock_pa043_motion(*, disable: bool = False) -> list[str]:
+    """Under _lock: stop host commands first; optionally request motor disable.
+
+    Warning strings mean the physical disable could not be verified. A host
+    software lock is NOT an emergency stop or a hardware torque-off guarantee.
+    """
+    global _pa043_motion_unlocked
+    previously_unlocked = _pa043_motion_unlocked
+    was_enabled = any(track.get("enabled") for track in _tracks.values())
+    _pa043_motion_unlocked = False
+    for track in _tracks.values():
+        track["enabled"] = False
+        track["spin_dir"] = 0
+        track["target_pos"] = track.get("cmd_pos")
+
+    warnings: list[str] = []
+    if disable and _service.connected and _service.motor_model == "lande_pa043" and (previously_unlocked or was_enabled):
+        for info in _motors:
+            mid = int(info["id"])
+            try:
+                feedback = _service.disable(mid)
+                if feedback is None:
+                    warnings.append(f"Motor ID {mid}: disable sent but no feedback received")
+            except Exception as exc:
+                warnings.append(f"Motor ID {mid}: disable failed: {exc}")
+    return warnings
 
 
 def _position_mode() -> bool:
     return _control_mode in POSITION_MODES
+
+
+def _recommended_control_defaults() -> dict[str, float]:
+    defaults = {
+        "kp": DEFAULT_KP,
+        "kd": DEFAULT_KD,
+        "vel_kp": DEFAULT_VEL_KP,
+        "vel_kd": DEFAULT_VEL_KD,
+        "vel_ki": DEFAULT_VEL_KI,
+    }
+    model_defaults = CONTROL_DEFAULTS.get(_service.motor_model or "", {})
+    defaults.update(model_defaults.get(_control_mode, {}))
+    return defaults
+
+
+def _apply_recommended_control_defaults() -> None:
+    global _kp, _kd, _vel_kp, _vel_kd, _vel_ki
+    defaults = _recommended_control_defaults()
+    _kp = float(defaults["kp"])
+    _kd = float(defaults["kd"])
+    _vel_kp = float(defaults["vel_kp"])
+    _vel_kd = float(defaults["vel_kd"])
+    _vel_ki = float(defaults["vel_ki"])
 
 
 def _motor_map() -> dict[int, dict[str, Any]]:
@@ -210,6 +321,12 @@ def _state_payload() -> dict[str, Any]:
         "motor_brand": spec.brand if spec else None,
         "supported_modes": list(spec.supported_modes) if spec else [],
         "motion_allowed": _motion_allowed(),
+        "motion_unlocked": bool(_pa043_motion_unlocked) if model == "lande_pa043" else False,
+        "motion_unlock_ready": model == "lande_pa043" and _pa043_unlock_blocker(require_disabled=True) is None,
+        "motion_unlock_reason": (
+            _pa043_unlock_blocker(require_disabled=True)
+            if model == "lande_pa043" and not _pa043_motion_unlocked else ""
+        ),
         "dial_allowed": _motion_allowed() and _position_mode(),
         "control_mode": _control_mode,
         "selected_ids": list(_selected_ids),
@@ -227,6 +344,14 @@ def _state_payload() -> dict[str, Any]:
         "max_deg_s": math.degrees(_max_speed_rad_s),
         "kp": _kp,
         "kd": _kd,
+        "vel_kp": _vel_kp,
+        "vel_kd": _vel_kd,
+        "vel_ki": _vel_ki,
+        "recommended_defaults": dict(
+            CONTROL_DEFAULTS
+            .get(model or "", {})
+            .get(_control_mode, {})
+        ),
         "errors": list(_errors),
         "error_seq": _error_seq,
     }
@@ -269,6 +394,7 @@ def _rescan(start_id: int | None = None, end_id: int | None = None) -> list[dict
     global _motors, _control_mode
     keep_selected = list(_selected_ids)
     prefer_focus = _focus_id
+    previous_mode = _control_mode
     _motors = _service.scan(start_id, end_id)
     _reset_tracks(
         keep_selected=keep_selected,
@@ -276,6 +402,8 @@ def _rescan(start_id: int | None = None, end_id: int | None = None) -> list[dict
         preserve_enabled=False,
     )
     _control_mode = _choose_control_mode()
+    if _control_mode != previous_mode:
+        _apply_recommended_control_defaults()
     return _motors
 
 
@@ -299,9 +427,9 @@ def _position_command_kwargs(mode: str, position: float, velocity: float) -> dic
             "velocity": velocity,
             "pos_kp": _kp,
             "pos_kd": _kd,
-            "vel_kp": 0.0,
-            "vel_kd": 0.0,
-            "vel_ki": 0.0,
+            "vel_kp": _vel_kp,
+            "vel_kd": _vel_kd,
+            "vel_ki": _vel_ki,
             "feedback_timeout": 0.01,
         }
     if mode == "torque_position":
@@ -429,6 +557,37 @@ def state():
         return jsonify({"success": True, "state": _state_payload()})
 
 
+@app.route("/api/motion_lock", methods=["POST"])
+def motion_lock():
+    """Manual PA043 motion authorization for the current connection only."""
+    global _pa043_motion_unlocked
+    data = request.get_json(silent=True) or {}
+    action = str(data.get("action") or "").strip().lower()
+
+    if action not in {"unlock", "lock"}:
+        return _json_error("action must be 'unlock' or 'lock'")
+
+    with _lock:
+        if not _service.connected or _service.motor_model != "lande_pa043":
+            return _json_error("PA043 must be connected to change its motion lock", 409)
+
+        if action == "unlock":
+            if data.get("confirmation") != PA043_UNLOCK_CONFIRMATION:
+                return _json_error("Explicit PA043 motion safety confirmation is required", 400)
+            blocker = _pa043_unlock_blocker(require_disabled=True)
+            if blocker:
+                return _json_error(f"Cannot unlock PA043: {blocker}", 409)
+            _pa043_motion_unlocked = True
+            return jsonify({"success": True, "state": _state_payload()})
+
+        warnings = _relock_pa043_motion(disable=True)
+        return jsonify({
+            "success": True,
+            "state": _state_payload(),
+            "warnings": warnings,
+        })
+
+
 @app.route("/api/connect", methods=["POST"])
 def connect():
     global _motors, _tracks, _selected_ids, _focus_id, _control_mode
@@ -445,6 +604,11 @@ def connect():
 
     try:
         with _lock:
+            # The previous connection's approval must never transfer to a new
+            # motor model, CAN channel, or connection attempt.
+            warnings = _relock_pa043_motion(disable=True)
+            if warnings:
+                raise RuntimeError("Previous PA043 motor disable is unverified: " + "; ".join(warnings))
             _ensure_loop()
             _service.connect(
                 adapter=adapter,
@@ -463,6 +627,7 @@ def connect():
     except Exception as exc:
         traceback.print_exc()
         with _lock:
+            _relock_pa043_motion()
             _service.disconnect()
             _motors = []
             _tracks = {}
@@ -476,13 +641,14 @@ def connect():
 def disconnect():
     global _motors, _tracks, _selected_ids, _focus_id, _control_mode
     with _lock:
+        warnings = _relock_pa043_motion(disable=True)
         _service.disconnect()
         _motors = []
         _tracks = {}
         _selected_ids = []
         _focus_id = None
         _control_mode = ""
-    return jsonify({"success": True})
+    return jsonify({"success": True, "warnings": warnings})
 
 
 @app.route("/api/scan", methods=["POST"])
@@ -496,6 +662,10 @@ def scan():
 
     try:
         with _lock:
+            if _service.motor_model == "lande_pa043":
+                warnings = _relock_pa043_motion(disable=True)
+                if warnings:
+                    raise RuntimeError("PA043 software lock active, but motor disable is unverified: " + "; ".join(warnings))
             _rescan(
                 None if start_id is None else int(start_id),
                 None if end_id is None else int(end_id),
@@ -538,6 +708,10 @@ def control_mode():
 
     try:
         with _lock:
+            if _service.motor_model == "lande_pa043":
+                warnings = _relock_pa043_motion(disable=True)
+                if warnings:
+                    raise RuntimeError("PA043 software lock active, but motor disable is unverified: " + "; ".join(warnings))
             for mid in ids:
                 _service.set_control_mode(mid, mode, save=True)
                 if mid in _tracks:
@@ -552,6 +726,7 @@ def control_mode():
                 prefer_focus=_focus_id,
                 preserve_enabled=False,
             )
+            _apply_recommended_control_defaults()
             payload = _state_payload()
 
         return jsonify({"success": True, "state": payload})
@@ -562,7 +737,7 @@ def control_mode():
 
 @app.route("/api/settings", methods=["POST"])
 def settings():
-    global _kp, _kd, _max_speed_rad_s
+    global _kp, _kd, _vel_kp, _vel_kd, _vel_ki, _max_speed_rad_s
     data = request.get_json(silent=True) or {}
 
     with _lock:
@@ -570,6 +745,12 @@ def settings():
             _kp = max(0.0, min(250.0, float(data["kp"])))
         if "kd" in data:
             _kd = max(0.0, min(50.0, float(data["kd"])))
+        if "vel_kp" in data:
+            _vel_kp = max(0.0, min(250.0, float(data["vel_kp"])))
+        if "vel_kd" in data:
+            _vel_kd = max(0.0, min(50.0, float(data["vel_kd"])))
+        if "vel_ki" in data:
+            _vel_ki = max(0.0, min(0.05, float(data["vel_ki"])))
         if "max_deg_s" in data:
             deg_s = max(1.0, min(MAX_SPEED_DEG_S, float(data["max_deg_s"])))
             _max_speed_rad_s = math.radians(deg_s)
@@ -584,25 +765,39 @@ def enable():
 
     if not ids:
         return _json_error("Select at least one motor")
-    if not _motion_allowed():
-        return _json_error(
-            "Motion is locked for this motor model. For PA043, validate real feedback first; "
-            "then start the server with ALLOW_PA043_MOTION=1.",
-            409,
-        )
-
     try:
         with _lock:
-            for mid in ids:
-                _service.enable(mid)
-                track = _tracks.setdefault(mid, _track_from_state(mid))
-                pos = _state_pos(_safe_state(mid))
-                if pos is not None:
-                    track["cmd_pos"] = pos
-                    track["target_pos"] = pos
-                track["enabled"] = True
-                track["spin_dir"] = 0
-                track["fail"] = 0
+            if not _motion_allowed():
+                return _json_error("Motion is locked; unlock PA043 in the GUI first", 409)
+            attempted: list[int] = []
+            try:
+                for mid in ids:
+                    attempted.append(mid)
+                    feedback = _service.enable(mid)
+                    if _service.motor_model == "lande_pa043" and feedback is None:
+                        raise RuntimeError(f"PA043 Motor ID {mid} enable produced no feedback")
+                    track = _tracks.setdefault(mid, _track_from_state(mid))
+                    pos = _state_pos(_safe_state(mid))
+                    if pos is not None:
+                        track["cmd_pos"] = pos
+                        track["target_pos"] = pos
+                    track["enabled"] = True
+                    track["spin_dir"] = 0
+                    track["fail"] = 0
+            except Exception:
+                # A partially successful multi-motor Enable must not leave a
+                # GUI-controlled actuator enabled after a failed request.
+                for mid in attempted:
+                    try:
+                        stop_feedback = _service.disable(mid)
+                        if _service.motor_model == "lande_pa043" and stop_feedback is None:
+                            _note_error(f"Motor {mid}: disable after Enable failure has no feedback")
+                    except Exception as exc:
+                        _note_error(f"Motor {mid} disable after Enable failure: {exc}")
+                    if mid in _tracks:
+                        _tracks[mid]["enabled"] = False
+                        _tracks[mid]["spin_dir"] = 0
+                raise
             payload = _state_payload()
 
         return jsonify({"success": True, "state": payload})
@@ -638,19 +833,18 @@ def target():
 
     if not ids:
         return _json_error("Select at least one motor")
-    if not _motion_allowed():
-        return _json_error("Motion is locked for this motor model", 409)
-    if not _position_mode():
-        return _json_error(
-            f"Dial requires a position-capable mode: {', '.join(sorted(POSITION_MODES))}",
-            409,
-        )
-
     if data.get("deg") is None and data.get("rad") is None:
         return _json_error("deg or rad is required")
 
     try:
         with _lock:
+            if not _motion_allowed():
+                return _json_error("Motion is locked for this motor model", 409)
+            if not _position_mode():
+                return _json_error(
+                    f"Dial requires a position-capable mode: {', '.join(sorted(POSITION_MODES))}",
+                    409,
+                )
             for mid in ids:
                 track = _tracks.setdefault(mid, _track_from_state(mid))
                 track["spin_dir"] = 0
@@ -691,13 +885,12 @@ def spin():
 
     if not ids:
         return _json_error("Select at least one motor")
-    if not _motion_allowed():
-        return _json_error("Motion is locked for this motor model", 409)
-    if not _position_mode():
-        return _json_error("Spin requires MIT/servo/torque_position mode", 409)
-
     with _lock:
         if want:
+            if not _motion_allowed():
+                return _json_error("Motion is locked for this motor model", 409)
+            if not _position_mode():
+                return _json_error("Spin requires MIT/servo/torque_position mode", 409)
             not_enabled = [mid for mid in ids if not _tracks.get(mid, {}).get("enabled")]
             if not_enabled:
                 return _json_error(
@@ -740,13 +933,14 @@ def command():
         return _json_error("Select at least one motor")
     if not mode:
         return _json_error("mode is required")
-    if not _motion_allowed():
-        return _json_error("Motion is locked for this motor model", 409)
-
     results: dict[int, Any] = {}
 
     try:
         with _lock:
+            if not _motion_allowed():
+                return _json_error("Motion is locked for this motor model", 409)
+            if _service.motor_model == "lande_pa043" and mode != _control_mode:
+                return _json_error("PA043 command mode does not match verified control mode", 409)
             for mid in ids:
                 results[mid] = _service.send_command(mid, mode, **command_data)
 

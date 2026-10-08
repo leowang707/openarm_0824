@@ -112,6 +112,23 @@
 
     <div id="motionLock" class="lock"></div>
 
+    <div id="pa043MotionPanel" class="section" style="display:none">
+      <div class="section-title">LANDA PA043 運動安全鎖</div>
+      <div id="pa043LockStatus" class="sub">預設鎖定</div>
+      <label style="display:flex;align-items:center;gap:8px;margin:10px 0">
+        <input id="pa043SafetyAck" type="checkbox" style="width:auto;flex:none;margin:0" />
+        已確認馬達固定、活動範圍淨空、供電正常，且有人可立即切斷電源
+      </label>
+      <div class="row">
+        <button id="pa043Unlock" class="warn" disabled>解除運動鎖</button>
+        <button id="pa043Relock" class="danger" disabled>重新鎖定 / Disable</button>
+      </div>
+      <div class="sub" style="margin-top:8px">
+        解鎖不會直接 Enable。僅本次連線有效；斷線、重掃或變更模式後重新鎖定。
+        此為軟體鎖，不是硬體急停。
+      </div>
+    </div>
+
     <div class="section">
       <div class="section-title">Control Mode</div>
       <select id="mode"></select>
@@ -138,10 +155,11 @@
       <input id="speed" type="range" min="1" max="60" step="1" value="18" />
       <div id="speedLabel" class="sub">18 °/s</div>
       <div class="row">
-        <div><label>Kp</label><input id="kp" type="number" min="0" max="250" step="0.5" value="4" /></div>
-        <div><label>Kd</label><input id="kd" type="number" min="0" max="50" step="0.1" value="2" /></div>
+        <div><label>Position / MIT Kp</label><input id="kp" type="number" min="0" max="250" step="0.5" value="4" /></div>
+        <div><label>Position / MIT Kd</label><input id="kd" type="number" min="0" max="50" step="0.1" value="2" /></div>
       </div>
-      <button class="ghost" id="applySettings">套用速度 / Kp / Kd</button>
+      <div id="recommendedHint" class="sub" style="margin:6px 0">連線後會載入所選馬達與控制模式的建議參數。</div>
+      <button class="ghost" id="applySettings">套用控制參數</button>
     </div>
 
     <div class="section">
@@ -400,8 +418,23 @@ function applyState(s) {
   const motionLocked = connected && !s.motion_allowed;
   $("motionLock").style.display = motionLocked ? 'block' : 'none';
   $("motionLock").textContent = motionLocked
-    ? '此馬達型號目前鎖定運動控制。PA043 預設只開放連線、掃描與參數/模式驗證；完成實機 feedback 驗證後再用 ALLOW_PA043_MOTION=1 開啟。'
+    ? '目前運動控制已鎖定。PA043 請先在下方勾選安全確認，再手動解除運動鎖。'
     : '';
+
+  const isPa043 = connected && s.motor_model === 'lande_pa043';
+  const isPa043Unlocked = isPa043 && !!s.motion_unlocked;
+  $("pa043MotionPanel").style.display = isPa043 ? 'block' : 'none';
+  $("pa043LockStatus").textContent = isPa043Unlocked
+    ? (s.motion_allowed
+        ? '已解鎖：仍需按 Enable 才會驅動馬達'
+        : '已有解鎖授權，但運動條件不符合；請重新鎖定並重新掃描')
+    : (s.motion_unlock_reason
+        ? `鎖定中：${s.motion_unlock_reason}`
+        : '鎖定中：請確認設備安全後手動解鎖');
+  $("pa043SafetyAck").disabled = !isPa043 || isPa043Unlocked || !s.motion_unlock_ready;
+  $("pa043Unlock").disabled = !isPa043 || isPa043Unlocked ||
+    !s.motion_unlock_ready || !$("pa043SafetyAck").checked;
+  $("pa043Relock").disabled = !isPa043 || !isPa043Unlocked;
 
   const dialAllowed = !!s.dial_allowed;
   $("dial").classList.toggle('disabled', !dialAllowed);
@@ -423,6 +456,9 @@ function applyState(s) {
     $("speedLabel").textContent = `${fmt(s.max_deg_s ?? 18, 0)} °/s`;
     $("kp").value = Number.isFinite(Number(s.kp)) ? Number(s.kp) : 4;
     $("kd").value = Number.isFinite(Number(s.kd)) ? Number(s.kd) : 2;
+    $("velKp").value = Number.isFinite(Number(s.vel_kp)) ? Number(s.vel_kp) : 0;
+    $("velKd").value = Number.isFinite(Number(s.vel_kd)) ? Number(s.vel_kd) : 0;
+    $("velKi").value = Number.isFinite(Number(s.vel_ki)) ? Number(s.vel_ki) : 0;
     settingsInitialized = true;
   }
 
@@ -444,6 +480,16 @@ function applyState(s) {
   $("modeHint").textContent = isPositionMode($("mode").value)
     ? '輪盤可用：MIT / POS_VEL / Servo / Torque-Position。'
     : '此模式可用進階單次命令；輪盤停用。';
+
+  const recommended = s.recommended_defaults || {};
+  const recommendedText = Object.entries(recommended)
+    .map(([k, v]) => `${k}=${v}`)
+    .join(', ');
+  $("recommendedHint").textContent = connected
+    ? (recommendedText
+        ? `目前模式建議值：${recommendedText}`
+        : '目前模式沒有額外的建議增益；保留通用 GUI 預設值。')
+    : '連線後會載入所選馬達與控制模式的建議參數。';
 
   for (const e of (s.errors || [])) {
     if (Number(e.seq) > lastErrorSeq) {
@@ -514,10 +560,12 @@ $("connect").onclick = async () => {
 
 $("disconnect").onclick = async () => {
   try {
-    await api('/api/disconnect', {method:'POST'});
+    const data = await api('/api/disconnect', {method:'POST'});
     settingsInitialized = false;
+    $("pa043SafetyAck").checked = false;
     applyState({connected:false,motors:[],supported_modes:[],errors:[]});
     log('Disconnected.');
+    for (const warning of (data.warnings || [])) log(`WARNING: ${warning}`);
   } catch(e){ log(`ERROR: ${e.message}`); }
 };
 
@@ -554,6 +602,7 @@ $("applyMode").onclick = async () => {
   try {
     await pushSelection();
     const mode = $("mode").value;
+    settingsInitialized = false;
     const data = await api('/api/control_mode', {
       method:'POST', headers:{'Content-Type':'application/json'},
       body:JSON.stringify({ids:selectedIds(), mode})
@@ -570,7 +619,10 @@ $("applySettings").onclick = async () => {
       body:JSON.stringify({
         max_deg_s:Number($("speed").value),
         kp:Number($("kp").value),
-        kd:Number($("kd").value)
+        kd:Number($("kd").value),
+        vel_kp:Number($("velKp").value),
+        vel_kd:Number($("velKd").value),
+        vel_ki:Number($("velKi").value)
       })
     });
     applyState(data.state);
@@ -578,6 +630,37 @@ $("applySettings").onclick = async () => {
   } catch(e){ log(`ERROR: ${e.message}`); }
 };
 $("speed").oninput = () => $("speedLabel").textContent = `${$("speed").value} °/s`;
+
+$("pa043SafetyAck").onchange = () => {
+  if (state) applyState(state);
+};
+
+$("pa043Unlock").onclick = async () => {
+  if (!$("pa043SafetyAck").checked) return;
+  if (!window.confirm('確認解除 LANDA PA043 運動鎖？解除後按 Enable 或送出運動命令，馬達可能立即動作。')) return;
+  try {
+    const data = await api('/api/motion_lock', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'unlock', confirmation:'I_ACCEPT_PA043_MOTION'})
+    });
+    $("pa043SafetyAck").checked = false;
+    applyState(data.state);
+    log('PA043 motion unlocked for this connection. Motor is not enabled yet.');
+  } catch(e) { log(`ERROR: ${e.message}`); }
+};
+
+$("pa043Relock").onclick = async () => {
+  try {
+    const data = await api('/api/motion_lock', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body:JSON.stringify({action:'lock'})
+    });
+    $("pa043SafetyAck").checked = false;
+    applyState(data.state);
+    log('PA043 software motion lock enabled; Disable requested.');
+    for (const warning of (data.warnings || [])) log(`WARNING: ${warning}`);
+  } catch(e) { log(`ERROR: ${e.message}`); }
+};
 
 $("enable").onclick = async () => {
   try {
